@@ -38,11 +38,18 @@ from flux.pab_manager import PABConfig, set_pab_manager, update_steps, enable_pa
 from flux.pab_diffusers import apply_pab_to_model, reset_model_pab_cache, reset_pab_stats, get_pab_stats
 from flux.pab_flux_model import wrap_flux_forward_with_pab
 
-from utils.timer import init_timer, print_time_statistics
+from utils.timer import init_timer, print_time_statistics, save_time_statistics_to_file
+from jano.stuff import get_prompt_id
+
+
 
 MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Flux-1"
 PROMPT = "A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background."
-OUTPUT_DIR = "./pab_flux_result/"
+SELF_RANGE = 2
+CROSS_RANGE = 5
+ENABLE_PAB = 1
+TAG = f"s{SELF_RANGE}c{CROSS_RANGE}" if ENABLE_PAB else "ori"
+OUTPUT_DIR = f"./results/pab_wan_result/{get_prompt_id(PROMPT)}"
 ENABLE_PAB = True
 
 init_timer()

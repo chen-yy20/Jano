@@ -94,7 +94,7 @@ class WanT2V_toca:
         if use_usp:
             from xfuser.core.distributed import get_sequence_parallel_world_size
 
-            from .distributed.xdit_context_parallel import (
+            from wan.distributed.xdit_context_parallel import (
                 usp_attn_forward,
                 usp_dit_forward,
             )
@@ -115,6 +115,7 @@ class WanT2V_toca:
 
         self.sample_neg_prompt = config.sample_neg_prompt
 
+    @get_timer("generate_e2e")
     def generate(self,
                  input_prompt,
                  size=(1280, 720),
@@ -278,12 +279,11 @@ class WanT2V_toca:
                 if hasattr(self.model, 'toca_current'):
                     self.model.toca_current['flag'] = 1
                     
-                with get_timer("dit"):
-                    noise_pred_uncond = self.model(
-                        latent_model_input, t=timestep, **arg_null)[0]
+                noise_pred_uncond = self.model(
+                    latent_model_input, t=timestep, **arg_null)[0]
 
-                    noise_pred = noise_pred_uncond + guide_scale * (
-                        noise_pred_cond - noise_pred_uncond)
+                noise_pred = noise_pred_uncond + guide_scale * (
+                    noise_pred_cond - noise_pred_uncond)
 
                 temp_x0 = sample_scheduler.step(
                     noise_pred.unsqueeze(0),

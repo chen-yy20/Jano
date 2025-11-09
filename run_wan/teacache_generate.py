@@ -29,14 +29,20 @@ from wan.utils.fm_solvers import (FlowDPMSolverMultistepScheduler,
 from wan.utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
 from tqdm import tqdm
 
-from utils.timer import init_timer, get_timer, print_time_statistics
+from utils.timer import init_timer, get_timer, print_time_statistics, save_time_statistics_to_file
+
+from jano.stuff import get_prompt_id
+from datetime import datetime
+time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
 
 init_timer()
 PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
 MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Wan2.1-T2V-1.3B" # 1.3B / 14B
-ENABLE_TEACACHE = True
+ENABLE_TEACACHE = 0
 THRESH = 0.07 # Higher speedup will cause to worse quality -- 0.1 for 2.0x speedup -- 0.2 for 3.0x speedup
-OUTPUT_DIR = "./teacache_wan_result/"
+
+TAG = f"thresh{THRESH}" if ENABLE_TEACACHE else "ori"
+OUTPUT_DIR = f"./results/tea_wan_result/{get_prompt_id(PROMPT)}"
 
 
 
@@ -58,7 +64,7 @@ EXAMPLE_PROMPT = {
     },
 }
 
-
+@get_timer("generate_e2e")
 def t2v_generate(self,
                  input_prompt,
                  size=(1280, 720),
@@ -776,6 +782,8 @@ def _parse_args():
     help="Enable VBench naming (prompt-index.mp4)."
    )
     args = parser.parse_args()
+    args.task = "t2v-1.3B" if "1.3B" in MODEL_PATH else "t2v-14B"
+    args.size =  "832*480" if "1.3B" in MODEL_PATH else "1280*720"
     args.prompt = PROMPT
     args.ckpt_dir = MODEL_PATH
     args.teacache_thresh = THRESH if ENABLE_TEACACHE else 0
@@ -1029,21 +1037,21 @@ def generate(args):
 
     if rank == 0:
         
-        if args.vbench==True and args.vbench_index is not None:
-            clean_prompt = args.prompt.replace("/", "_").replace(" ", "_").replace(",", "_")
-            suffix = '.png' if "t2i" in args.task else '.mp4'
-            filename = f"{clean_prompt}-{args.vbench_index}{suffix}"
-        else:
-            formatted_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-            formatted_prompt = args.prompt.replace(" ", "_").replace("/",
-                                                                     "_")[:50]
-            suffix = '.png' if "t2i" in args.task else '.mp4'
-            filename = f"{args.task}_{args.size.replace('*','x') if sys.platform=='win32' else args.size}_{args.ulysses_size}_{args.ring_size}_{formatted_prompt}_{formatted_time}" + suffix
-        os.makedirs(args.output_dir, exist_ok=True)
+        # if args.vbench==True and args.vbench_index is not None:
+        #     clean_prompt = args.prompt.replace("/", "_").replace(" ", "_").replace(",", "_")
+        #     suffix = '.png' if "t2i" in args.task else '.mp4'
+        #     filename = f"{clean_prompt}-{args.vbench_index}{suffix}"
+        # else:
+        #     formatted_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        #     formatted_prompt = args.prompt.replace(" ", "_").replace("/",
+        #                                                              "_")[:50]
+        #     suffix = '.png' if "t2i" in args.task else '.mp4'
+        #     filename = f"{args.task}_{args.size.replace('*','x') if sys.platform=='win32' else args.size}_{args.ulysses_size}_{args.ring_size}_{formatted_prompt}_{formatted_time}" + suffix
         
-        refine_prompt = args.prompt.replace(" ","_")[:20]
+        suffix = '.png' if "t2i" in args.task else '.mp4'
+        filename = f"{args.task}_{TAG}_{get_prompt_id(PROMPT)}" + suffix
         os.makedirs(args.output_dir, exist_ok=True)
-        args.save_file = os.path.join(args.output_dir, f"tea{args.teacache_thresh}_{refine_prompt}.mp4")
+        args.save_file = os.path.join(args.output_dir, filename)
         
         if "t2i" in args.task:
             logging.info(f"Saving generated image to {args.save_file}")
@@ -1070,3 +1078,4 @@ if __name__ == "__main__":
     args = _parse_args()
     generate(args)
     print_time_statistics()
+    save_time_statistics_to_file(f"{OUTPUT_DIR}/{TAG}_time_stats.txt")

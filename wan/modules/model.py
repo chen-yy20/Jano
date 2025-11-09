@@ -9,6 +9,8 @@ from diffusers.models.modeling_utils import ModelMixin
 
 from .attention import flash_attention
 
+from utils.timer import get_timer
+
 __all__ = ['WanModel']
 
 T5_CONTEXT_TOKEN_NUMBER = 512
@@ -490,6 +492,7 @@ class WanModel(ModelMixin, ConfigMixin):
         # initialize weights
         self.init_weights()
 
+    @get_timer("dit")
     def forward(
         self,
         x,

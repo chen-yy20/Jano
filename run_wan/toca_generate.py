@@ -22,15 +22,18 @@ from wan.utils.utils import cache_image, cache_video, str2bool
 
 from wan.jano_baselines.text2video_tocache import WanT2V_toca
 
-from utils.timer import init_timer, get_timer, print_time_statistics
+from utils.timer import init_timer, get_timer, print_time_statistics, save_time_statistics_to_file
+from jano.stuff import get_prompt_id
+from datetime import datetime
+time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
 
 init_timer()
 PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
 MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Wan2.1-T2V-1.3B" # 1.3B / 14B
 ENABLE_TOCA = True
-tag = "" if ENABLE_TOCA else "origin_"
 
-OUTPUT_DIR = f"./toca_{tag}wan_result/" 
+TAG = "toca" if ENABLE_TOCA else "ori"
+OUTPUT_DIR = f"./results/toca_wan_result/{get_prompt_id(PROMPT)}"
 
 EXAMPLE_PROMPT = {
     "t2v-1.3B": {
@@ -277,6 +280,8 @@ def _parse_args():
 
     args = parser.parse_args()
     
+    args.task = "t2v-1.3B" if "1.3B" in MODEL_PATH else "t2v-14B"
+    args.size =  "832*480" if "1.3B" in MODEL_PATH else "1280*720"
     args.prompt = PROMPT
     args.ckpt_dir = MODEL_PATH
     args.output_dir = OUTPUT_DIR
@@ -609,18 +614,21 @@ def generate(args):
             suffix = '.png' if "t2i" in args.task else '.mp4'
 
     # ✅ 优先使用 VBench 命名规则
-        if args.vbench==True and args.vbench_index is not None:
-            clean_prompt = args.prompt.replace("/", "_").replace(" ", "_").replace(",", "_")
-            filename = f"{clean_prompt}-{args.vbench_index}{suffix}"
-        else:
-            formatted_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-            formatted_prompt = args.prompt.replace(" ", "_").replace("/",
-                                                                     "_")[:50]
-            suffix = '.png' if "t2i" in args.task else '.mp4'
-            filename = f"{args.task}_{args.size.replace('*','x') if sys.platform=='win32' else args.size}_{args.ulysses_size}_{args.ring_size}_{formatted_prompt}_{formatted_time}" + suffix
+        # if args.vbench==True and args.vbench_index is not None:
+        #     clean_prompt = args.prompt.replace("/", "_").replace(" ", "_").replace(",", "_")
+        #     filename = f"{clean_prompt}-{args.vbench_index}{suffix}"
+        # else:
+        #     formatted_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        #     formatted_prompt = args.prompt.replace(" ", "_").replace("/",
+        #                                                              "_")[:50]
+        #     suffix = '.png' if "t2i" in args.task else '.mp4'
+        #     filename = f"{args.task}_{args.size.replace('*','x') if sys.platform=='win32' else args.size}_{args.ulysses_size}_{args.ring_size}_{formatted_prompt}_{formatted_time}" + suffix
+        # os.makedirs(args.output_dir, exist_ok=True)
+        suffix = '.png' if "t2i" in args.task else '.mp4'
+        filename = f"{args.task}_{TAG}_{get_prompt_id(PROMPT)}" + suffix
         os.makedirs(args.output_dir, exist_ok=True)
-        
         args.save_file = os.path.join(args.output_dir, filename)
+        
         if "t2i" in args.task:
             logging.info(f"Saving generated image to {args.save_file}")
             cache_image(
@@ -645,3 +653,4 @@ if __name__ == "__main__":
     args = _parse_args()
     generate(args)
     print_time_statistics()
+    save_time_statistics_to_file(f"{OUTPUT_DIR}/{TAG}_time_stats.txt")

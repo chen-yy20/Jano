@@ -3,3 +3,4 @@ wan_bckup
 *.png
 *.log
 note.md
+__pycache__

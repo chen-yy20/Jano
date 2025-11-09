@@ -9,6 +9,20 @@ from matplotlib.colors import ListedColormap
 from .block_manager import get_block_manager
 from utils.envs import GlobalEnv
 
+
+def get_prompt_id(prompt):
+    # 取关键词并过滤掉常用词
+    skip_words = {'a', 'an', 'the', 'in', 'on', 'at', 'and', 'or', 'of', 'with', 'by'}
+    words = [w for w in prompt.lower().split() if w not in skip_words]
+    
+    # 取前3-4个关键词
+    key_words = words[:4]
+    
+    # 组合关键词
+    id = '_'.join(key_words)
+    
+    return id
+
 def store_feature(feature: torch.Tensor, timestep: int, layer: int, name: str, rank:int = 0):
     
     tag = GlobalEnv.get_envs("tag")

@@ -24,6 +24,7 @@ from .utils.fm_solvers import (
     retrieve_timesteps,
 )
 from .utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
+from utils.timer import get_timer
 
 
 class WanT2V:
@@ -111,6 +112,7 @@ class WanT2V:
 
         self.sample_neg_prompt = config.sample_neg_prompt
 
+    @get_timer("e2e")
     def generate(self,
                  input_prompt,
                  size=(1280, 720),

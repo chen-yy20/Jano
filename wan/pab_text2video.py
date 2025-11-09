@@ -118,6 +118,7 @@ class WanT2V_pab:
 
         self.sample_neg_prompt = config.sample_neg_prompt
 
+    @get_timer("generate_e2e")
     def generate(self,
                  input_prompt,
                  size=(1280, 720),
