@@ -1,0 +1,509 @@
+{
+  "total_images": 100,
+  "psnr_mean": 22.910448176039285,
+  "psnr_std": 3.51713622175987,
+  "ssim_mean": 0.8074036853332329,
+  "ssim_std": 0.0955626484810193,
+  "results": [
+    {
+      "filename": "A_TV_with_04fe331d5b8ed1dafdabc6859f545053.png",
+      "psnr": 24.922186078368206,
+      "ssim": 0.8935609259871984
+    },
+    {
+      "filename": "A_black_and_b1545b354eef699c87e4ffa6fe38f110.png",
+      "psnr": 23.15566453738079,
+      "ssim": 0.8800178057590892
+    },
+    {
+      "filename": "A_breathtaking_view_586253af7a2e77384e20db4269d912d1.png",
+      "psnr": 26.915845097867294,
+      "ssim": 0.8620833494256401
+    },
+    {
+      "filename": "A_bustling_cityscape_4b711f84dc788e6ad5c3a56839fd0d80.png",
+      "psnr": 18.23781004222862,
+      "ssim": 0.5684695486277347
+    },
+    {
+      "filename": "A_closeup_face_debc0d492ae1a00ab7051220ca0f2011.png",
+      "psnr": 22.996782780304123,
+      "ssim": 0.8266468018814529
+    },
+    {
+      "filename": "A_colorful_cartoon_fac5b58e25d08b5553482d4299796f03.png",
+      "psnr": 19.9652563598604,
+      "ssim": 0.7847903913067249
+    },
+    {
+      "filename": "A_colossal_ancient_dcb5c5b5408964dc6eed7e5d6e714535.png",
+      "psnr": 20.122101306313922,
+      "ssim": 0.6685381136461269
+    },
+    {
+      "filename": "A_cute_and_0ed1308ab62260560180fdd5fc5cecea.png",
+      "psnr": 27.967659173480794,
+      "ssim": 0.943773111060597
+    },
+    {
+      "filename": "A_cute_penguin_700f3200845b6c35c94c1301b9b9dcf4.png",
+      "psnr": 21.361585534242966,
+      "ssim": 0.7642328592720634
+    },
+    {
+      "filename": "A_detailed_closeup_c68545788786cc7f2f3bbb922c83b570.png",
+      "psnr": 30.482970170817385,
+      "ssim": 0.9613765936215519
+    },
+    {
+      "filename": "A_detailed_submarine_25fbe06f23fd4760a19cc2d58b6b02fa.png",
+      "psnr": 27.45530893284867,
+      "ssim": 0.9117169014527485
+    },
+    {
+      "filename": "A_detailed_vintage_abb2df3ab44aef41cd16317a99f97bbd.png",
+      "psnr": 17.412617161533603,
+      "ssim": 0.6953325204040987
+    },
+    {
+      "filename": "A_fierce_Bengal_f3312a3998b745c1ac84851b154ab22d.png",
+      "psnr": 22.2032477395333,
+      "ssim": 0.8127921698386312
+    },
+    {
+      "filename": "A_footprint_shaped_2b83273aaacc7af4916ebaf99a7451e1.png",
+      "psnr": 21.56616693844082,
+      "ssim": 0.6899412715706305
+    },
+    {
+      "filename": "A_friendly_car_4f67cacc8fee03e6d0fe22d6dbe1dad2.png",
+      "psnr": 22.474715451887025,
+      "ssim": 0.8454976472417496
+    },
+    {
+      "filename": "A_goldenbrown_roast_50c147567ba30742323ab3faa21b1c92.png",
+      "psnr": 21.19305606091541,
+      "ssim": 0.8008200348534297
+    },
+    {
+      "filename": "A_graceful_cat_35ddd31d11fc00e1212b066944b63a0a.png",
+      "psnr": 29.707343925062712,
+      "ssim": 0.9575481278250287
+    },
+    {
+      "filename": "A_grand_medievalstyle_248bcf4c7c396a4a5fbe1e4e93ff2aac.png",
+      "psnr": 19.1228452408451,
+      "ssim": 0.7407124113821689
+    },
+    {
+      "filename": "A_gray_tabby_9bca10effe5b4c44bf545906b344bb03.png",
+      "psnr": 20.93508237816763,
+      "ssim": 0.7990111019058775
+    },
+    {
+      "filename": "A_green_apple_f079f9cba15972dd0d513ae81b73586e.png",
+      "psnr": 27.63493643116255,
+      "ssim": 0.9298745897452192
+    },
+    {
+      "filename": "A_halfempty_bottle_de2b50f56d0190b8b96a1410c08fbab4.png",
+      "psnr": 28.471187355418284,
+      "ssim": 0.9413551504627155
+    },
+    {
+      "filename": "A_highly_detailed_7b7fea6742a4eb38d5331b92b67e7423.png",
+      "psnr": 22.395971197718467,
+      "ssim": 0.8387736384976582
+    },
+    {
+      "filename": "A_highresolution_photo_9460727736f6327a2695122961d77059.png",
+      "psnr": 23.22209226230062,
+      "ssim": 0.8073619009721537
+    },
+    {
+      "filename": "A_kangaroo_amidst_6046aa5f1e99d80c54f8580c404aac74.png",
+      "psnr": 26.816960607169644,
+      "ssim": 0.8809459428526326
+    },
+    {
+      "filename": "A_large_crowd_817f877a567bb97d561d00949e43fbeb.png",
+      "psnr": 21.754908001336336,
+      "ssim": 0.6899996909201372
+    },
+    {
+      "filename": "A_lovestruck_cup_edad55c2ba6c8715fd63f37f34bcc067.png",
+      "psnr": 23.934608277899635,
+      "ssim": 0.8917380480967626
+    },
+    {
+      "filename": "A_majestic_fiery_15e8dd8205795ca6e6176d9c5e191a07.png",
+      "psnr": 22.377858168060747,
+      "ssim": 0.7725787130194952
+    },
+    {
+      "filename": "A_majestic_tiger_a2ee485a95414dfeda80254718adb108.png",
+      "psnr": 18.21340060218035,
+      "ssim": 0.7969526822254059
+    },
+    {
+      "filename": "A_majestic_tree_403ea0f2e69a1b38f97b759965effa56.png",
+      "psnr": 21.14859583490597,
+      "ssim": 0.680738779081746
+    },
+    {
+      "filename": "A_man_in_27ad6ff65d091db618090c677c59f442.png",
+      "psnr": 21.776385724407422,
+      "ssim": 0.7910770760324938
+    },
+    {
+      "filename": "A_man_wearing_cd1c0d5adfa850f79539eff8622bd596.png",
+      "psnr": 24.736361011901163,
+      "ssim": 0.8799222548620316
+    },
+    {
+      "filename": "A_massive_statue_7fd54d152600c8752e21d63c01b88542.png",
+      "psnr": 19.450616474331092,
+      "ssim": 0.6548186853411208
+    },
+    {
+      "filename": "A_modern_sleek_86a39d19f81f6ed28f2925922c8fef3e.png",
+      "psnr": 25.133436896152126,
+      "ssim": 0.9155312268857981
+    },
+    {
+      "filename": "A_pair_of_78587ba9c5e5a6c7b81691079957cd00.png",
+      "psnr": 26.504830344328973,
+      "ssim": 0.8959584168132344
+    },
+    {
+      "filename": "A_peaceful_sunrise_0fa399c11c7e29bf90da587d9d26e16d.png",
+      "psnr": 26.05234109888249,
+      "ssim": 0.895055505740182
+    },
+    {
+      "filename": "A_realistic_detailed_3d11cb2a8c681983c0f605f5f08033fc.png",
+      "psnr": 24.488364171353574,
+      "ssim": 0.8642718157701523
+    },
+    {
+      "filename": "A_realistic_scene_f79b519c8e440e0988fdb62156bf144b.png",
+      "psnr": 19.433390579079646,
+      "ssim": 0.65251864280721
+    },
+    {
+      "filename": "A_serene_lakeside_3152eb1fcc2752ea5ae28feb7b55a1a6.png",
+      "psnr": 25.77522249252486,
+      "ssim": 0.8714060892562369
+    },
+    {
+      "filename": "A_serene_mountain_22d496faa5bcc8e3e0ca679f3cd51fa8.png",
+      "psnr": 25.249884215027876,
+      "ssim": 0.8237604372690832
+    },
+    {
+      "filename": "A_serene_mountain_d22fdfa1b8fdb6e987c36f07c537ec38.png",
+      "psnr": 24.311892539204393,
+      "ssim": 0.7771593151523192
+    },
+    {
+      "filename": "A_sleek_modern_3c7b9f1d85ea7922a5b209a927125a9e.png",
+      "psnr": 20.879285490288662,
+      "ssim": 0.8437845212888622
+    },
+    {
+      "filename": "A_smiling_banana_3adbfc8daf0c690b8d3941df6c5384aa.png",
+      "psnr": 22.090453526986416,
+      "ssim": 0.8434556054335798
+    },
+    {
+      "filename": "A_steaming_bowl_386e085a45e56a654be6a02e5d1e8d58.png",
+      "psnr": 24.182541608313308,
+      "ssim": 0.8645051863907741
+    },
+    {
+      "filename": "A_stunning_sunset_c416e809716a04d2c04eb163b9a6f6c2.png",
+      "psnr": 24.507803127641004,
+      "ssim": 0.7609391871656417
+    },
+    {
+      "filename": "A_submarine_exploring_1858baa54b19b53891356e74c940f944.png",
+      "psnr": 23.8290649272624,
+      "ssim": 0.7883099664283052
+    },
+    {
+      "filename": "A_vibrant_crimson_5266e7013eb6d481e366bf83a3dde626.png",
+      "psnr": 22.49207744976782,
+      "ssim": 0.7408839811301213
+    },
+    {
+      "filename": "A_vibrant_green_8cf1e4fc64a814a1470968cc65654194.png",
+      "psnr": 23.69686100863284,
+      "ssim": 0.8836952929346297
+    },
+    {
+      "filename": "A_vibrant_green_9d044c14fecac8316775d90e39f28c23.png",
+      "psnr": 20.0389188812135,
+      "ssim": 0.6886210125519329
+    },
+    {
+      "filename": "A_vibrant_margarita_fea337140138be92ab5f1d8fbc386178.png",
+      "psnr": 21.74115484105115,
+      "ssim": 0.8434478069460263
+    },
+    {
+      "filename": "A_vibrant_sunset_4c59f99a2495782618fc03edc5dbe626.png",
+      "psnr": 24.73366863148451,
+      "ssim": 0.8566410579668958
+    },
+    {
+      "filename": "A_vivid_yellow_10f2f70282aa0ae5c2b1739bde664abd.png",
+      "psnr": 22.77591640865973,
+      "ssim": 0.8324908177459253
+    },
+    {
+      "filename": "A_whimsical_frog_53a591d87d29ede7a828a1df44acc39d.png",
+      "psnr": 23.585585989406418,
+      "ssim": 0.8663373065133196
+    },
+    {
+      "filename": "A_woman_with_ce585df2672fca5c909a4664885fc0f6.png",
+      "psnr": 21.576891802973442,
+      "ssim": 0.8161461368650119
+    },
+    {
+      "filename": "A_wooden_deck_e4a7115d0229a06e25b6dbc38675c2eb.png",
+      "psnr": 18.142009684401707,
+      "ssim": 0.6000574443341344
+    },
+    {
+      "filename": "A_young_girl_053e80bbf483979e2004c1fad64402af.png",
+      "psnr": 20.58783244719987,
+      "ssim": 0.7431927332356153
+    },
+    {
+      "filename": "A_young_girl_d6033be0031145b96a7697143880b86a.png",
+      "psnr": 20.59821867025157,
+      "ssim": 0.7962827809052655
+    },
+    {
+      "filename": "A_zebra_with_bae52a0fa298baf0d8eb97d802a58d4f.png",
+      "psnr": 18.895974417134486,
+      "ssim": 0.7209974041280097
+    },
+    {
+      "filename": "An_aerial_view_07dd8b53a5ed074522fec98500bd3da9.png",
+      "psnr": 23.610812843900135,
+      "ssim": 0.8070276306273074
+    },
+    {
+      "filename": "An_elder_politician_a105e7717bf5e205b167471034f420fc.png",
+      "psnr": 22.245442760671317,
+      "ssim": 0.855885473407616
+    },
+    {
+      "filename": "An_old_weathered_c6c004092f7d18b473852e9b6cf626e7.png",
+      "psnr": 22.023017908606445,
+      "ssim": 0.7317186427886454
+    },
+    {
+      "filename": "Downtown_Singapore_at_aa229d169b00ad2a0db91a22b3722317.png",
+      "psnr": 19.518267520544743,
+      "ssim": 0.6807179574672976
+    },
+    {
+      "filename": "Four_cats_with_3b0b8173d06dbad0fb2053908b0d5d55.png",
+      "psnr": 19.344046450028355,
+      "ssim": 0.7333819477559022
+    },
+    {
+      "filename": "Four_modern_cars_2a2bf36c5c1ace21b8cd108ccca7305d.png",
+      "psnr": 19.854444236295564,
+      "ssim": 0.7148030132944974
+    },
+    {
+      "filename": "Saturn_rises_on_a09016328fecd61f9df9f87f9f5716f6.png",
+      "psnr": 28.26276285112079,
+      "ssim": 0.8705389373495319
+    },
+    {
+      "filename": "Superman_shaking_hands_b8c228fb7f5ec692c3fab6ba76206923.png",
+      "psnr": 22.82719777755258,
+      "ssim": 0.8222549019800791
+    },
+    {
+      "filename": "The_city_of_5c81aae97e1d9a90d5b10787c969f1dd.png",
+      "psnr": 20.95013906006505,
+      "ssim": 0.7410340763085648
+    },
+    {
+      "filename": "Three_modern_commercial_37f724b0be9241b3f7fcf48ee972f301.png",
+      "psnr": 22.435171235279796,
+      "ssim": 0.8434888461541085
+    },
+    {
+      "filename": "Two_grand_pianos_83288de7eb58e58a038823338f1de96c.png",
+      "psnr": 21.289539548602452,
+      "ssim": 0.831152151674399
+    },
+    {
+      "filename": "Two_worn_baseballs_ecd8a69119b5a20a0bc26253daa3ff61.png",
+      "psnr": 21.69895473020042,
+      "ssim": 0.8333502708140964
+    },
+    {
+      "filename": "a_baby_penguin_7734688caee02c9c90c2a46aea0a3ecd.png",
+      "psnr": 25.05170535753909,
+      "ssim": 0.9100143510866747
+    },
+    {
+      "filename": "a_black_baseball_bfd73008fc079cf2dcaa8c6127e48a73.png",
+      "psnr": 27.505206530393075,
+      "ssim": 0.8872630387910402
+    },
+    {
+      "filename": "a_colorful_comic_c27ded0dd3a4419f8c3ce77ce7dab8d3.png",
+      "psnr": 14.483795526818978,
+      "ssim": 0.5344034663561178
+    },
+    {
+      "filename": "a_dolphin_in_91c09ee4de406d2f1250c1779ea8d604.png",
+      "psnr": 21.20882423135843,
+      "ssim": 0.8120622473707791
+    },
+    {
+      "filename": "a_family_of_d12c07a7aeac33e766103d37348cd639.png",
+      "psnr": 20.3173671430596,
+      "ssim": 0.7589785020781282
+    },
+    {
+      "filename": "a_key__af0711eb7dab2d53c1a580c4705d7cb7.png",
+      "psnr": 23.80188987825198,
+      "ssim": 0.8660983624945019
+    },
+    {
+      "filename": "a_man_standing_7737307fef290186fdb16cd38f629c68.png",
+      "psnr": 21.23726048715455,
+      "ssim": 0.7176971144913913
+    },
+    {
+      "filename": "a_margarita_next_9c1163d09823e9ecaddf43a122b15ba0.png",
+      "psnr": 29.249794555992747,
+      "ssim": 0.94071836954019
+    },
+    {
+      "filename": "a_photo_of_e187aaae25df9bfd724d183b0fe97acb.png",
+      "psnr": 23.682789269074345,
+      "ssim": 0.8623342828005504
+    },
+    {
+      "filename": "a_photograph_of_c5fd2231a49bc7908e1d9a54ee0989d3.png",
+      "psnr": 24.113306281317122,
+      "ssim": 0.7956476475634583
+    },
+    {
+      "filename": "a_plant__baab0aa2c9a84bdb825c5f2a4e3bfa50.png",
+      "psnr": 23.772744421318745,
+      "ssim": 0.8823652749752794
+    },
+    {
+      "filename": "a_red_cube_77f08cb9bbcb38181d41323eb751f17c.png",
+      "psnr": 38.9546671439302,
+      "ssim": 0.9783638854358588
+    },
+    {
+      "filename": "a_rusty_red_461968489ce8db854621464b3c790d44.png",
+      "psnr": 21.4640387048144,
+      "ssim": 0.8040451802246453
+    },
+    {
+      "filename": "a_spacious_room_81455a9c37ef5a67b4d203a2210470da.png",
+      "psnr": 20.881634583305058,
+      "ssim": 0.7632963709028987
+    },
+    {
+      "filename": "a_tennis_court_23c19c6e1b68c679a6dc5c8a4fe2455a.png",
+      "psnr": 21.519149934511127,
+      "ssim": 0.7655943549070447
+    },
+    {
+      "filename": "a_thumbnail_image_8812d50a4a126339fb34f9c9847596cb.png",
+      "psnr": 25.518409626542272,
+      "ssim": 0.9124270359096741
+    },
+    {
+      "filename": "a_tiger_in_e13b5f6d398c708081258f000cc0c6ec.png",
+      "psnr": 24.2273322856963,
+      "ssim": 0.8622470261906602
+    },
+    {
+      "filename": "a_turtle__d0d9e438e884c4344d75168cf34bf127.png",
+      "psnr": 20.699168393024237,
+      "ssim": 0.8080917371626649
+    },
+    {
+      "filename": "a_vibrant_fresh_2a52472881a854a2ceac0d91a67d5249.png",
+      "psnr": 24.76620726268819,
+      "ssim": 0.8908659754793274
+    },
+    {
+      "filename": "a_vibrant_margarita_0c8554ee75b4200b9a3a856e4f449c8f.png",
+      "psnr": 25.25274270730626,
+      "ssim": 0.9148748777813646
+    },
+    {
+      "filename": "a_wall__6e19b3f77a0d0f4883543f90e9d0fdbd.png",
+      "psnr": 19.758458690159316,
+      "ssim": 0.5607909422869016
+    },
+    {
+      "filename": "a_watermelon_chair_37b8244231de15c19e53b861832527e0.png",
+      "psnr": 22.42543501911609,
+      "ssim": 0.7954186951385048
+    },
+    {
+      "filename": "an_abstract_painting_20afed91464dfa151321716f10e40907.png",
+      "psnr": 19.44387783825363,
+      "ssim": 0.6439711691871235
+    },
+    {
+      "filename": "an_antique_chest_83bbba6cdb4fb99cb8fdced7812219fb.png",
+      "psnr": 20.405621170809276,
+      "ssim": 0.7169387958732313
+    },
+    {
+      "filename": "an_ostrich_standing_a008e62ba2c43d5618011c116612c47a.png",
+      "psnr": 23.346799782003025,
+      "ssim": 0.7986794361614024
+    },
+    {
+      "filename": "congruent_triangles__dcbd948e6241b58b1504c9ad103d1349.png",
+      "psnr": 15.177505401306215,
+      "ssim": 0.8358362109413663
+    },
+    {
+      "filename": "molecule___2c3779227c7706e4528d970f098634d4.png",
+      "psnr": 27.003237332326083,
+      "ssim": 0.9331490173081157
+    },
+    {
+      "filename": "robots___27f5e15b6af3223f1176293cd015771d.png",
+      "psnr": 19.333255162314554,
+      "ssim": 0.7565285843799963
+    },
+    {
+      "filename": "the_cover_of_ad43d6fd3989f28f1b1984bacedd1662.png",
+      "psnr": 16.051697313905876,
+      "ssim": 0.5660260765789799
+    },
+    {
+      "filename": "the_silhouette_of_2589eaed89fa94235a3f9ceeaaba2843.png",
+      "psnr": 29.282149052181218,
+      "ssim": 0.9438154300064991
+    },
+    {
+      "filename": "the_silhouette_of_bd64bca2b998de108306cbe0c746c5d4.png",
+      "psnr": 25.61320148647512,
+      "ssim": 0.9080226934665029
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+temporal_mean: 0.253748
+spatial_mean: 0.186068
+combined_mean: 0.233444
+enhanced_mean: 0.263066
+enhancement_ratio: 1.126891
