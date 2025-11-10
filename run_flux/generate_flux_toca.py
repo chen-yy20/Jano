@@ -11,7 +11,7 @@ from jano.stuff import get_prompt_id
 
 MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Flux-1"
 PROMPT = "A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background."
-ENABLE_TOCA = 1
+ENABLE_TOCA = 0
 TAG = f"toca" if ENABLE_TOCA else "ori"
 OUTPUT_DIR = f"./flux_results/tokencache_flux_result/{get_prompt_id(PROMPT)}"
 
@@ -27,6 +27,7 @@ args = parser.parse_args()
 args.model_path = MODEL_PATH
 args.prompt = PROMPT
 args.output_dir = OUTPUT_DIR
+args.seed = 42
 
 # 加载模型
 pipe = FluxPipeline.from_pretrained(args.model_path, torch_dtype=torch.bfloat16)
@@ -45,6 +46,7 @@ patcher = apply_toca_to_pipeline(pipe, num_steps, enable=True)
 if not ENABLE_TOCA:
     patcher.disable_toca()
 
+generator = torch.Generator("cuda").manual_seed(args.seed)
 disable_timing()
 for _ in range(warmup):
     image = pipe(
@@ -52,7 +54,7 @@ for _ in range(warmup):
         num_inference_steps=num_steps,
         guidance_scale=3.5,
         callback_on_step_end=callback_fn,
-        generator=torch.Generator("cuda").manual_seed(42)  # ← 必需
+        generator=generator,
         ).images[0]
 
 enable_timing()
@@ -61,7 +63,7 @@ image = pipe(
     num_inference_steps=num_steps,
     guidance_scale=3.5,
     callback_on_step_end=callback_fn,
-    generator=torch.Generator("cuda").manual_seed(42)  # ← 必需
+    generator=generator,
     ).images[0]
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)

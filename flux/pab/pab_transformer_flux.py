@@ -38,6 +38,7 @@ from diffusers.models.embeddings import CombinedTimestepGuidanceTextProjEmbeddin
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 
 from jano.modules.flux.attention_processor import FluxAttnProcessor2_0
+from flux.pab.pab_manager import get_pab_manager
 from utils.timer import get_timer
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -58,7 +59,7 @@ class FluxSingleTransformerBlock(nn.Module):
             processing of `context` conditions.
     """
 
-    def __init__(self, dim, num_attention_heads, attention_head_dim, mlp_ratio=4.0):
+    def __init__(self, dim, num_attention_heads, attention_head_dim, mlp_ratio=4.0, layer_id=-1):
         super().__init__()
         self.mlp_hidden_dim = int(dim * mlp_ratio)
 
@@ -66,6 +67,8 @@ class FluxSingleTransformerBlock(nn.Module):
         self.proj_mlp = nn.Linear(dim, self.mlp_hidden_dim)
         self.act_mlp = nn.GELU(approximate="tanh")
         self.proj_out = nn.Linear(dim + self.mlp_hidden_dim, dim)
+        
+        self.layer_id = layer_id
 
         if is_torch_npu_available():
             processor = FluxAttnProcessor2_0_NPU()
@@ -96,11 +99,18 @@ class FluxSingleTransformerBlock(nn.Module):
         mlp_hidden_states = self.act_mlp(self.proj_mlp(norm_hidden_states))
         joint_attention_kwargs = joint_attention_kwargs or {}
         
-        attn_output = self.attn(
-            hidden_states=norm_hidden_states,
-            image_rotary_emb=image_rotary_emb,
-            **joint_attention_kwargs,
-        )
+        with get_timer("pab_attn"):
+            pab_manager = get_pab_manager()
+            if pab_manager.self_calc:
+                attn_output = self.attn(
+                    hidden_states=norm_hidden_states,
+                    image_rotary_emb=image_rotary_emb,
+                    **joint_attention_kwargs,
+                )
+                pab_manager.self_attn_cache[self.layer_id] = attn_output
+            else:
+                attn_output = pab_manager.self_attn_cache[self.layer_id]
+        
 
         hidden_states = torch.cat([attn_output, mlp_hidden_states], dim=2)
         gate = gate.unsqueeze(1)
@@ -127,7 +137,7 @@ class FluxTransformerBlock(nn.Module):
             processing of `context` conditions.
     """
 
-    def __init__(self, dim, num_attention_heads, attention_head_dim, qk_norm="rms_norm", eps=1e-6):
+    def __init__(self, dim, num_attention_heads, attention_head_dim, qk_norm="rms_norm", eps=1e-6, layer_id=-1):
         super().__init__()
 
         self.norm1 = AdaLayerNormZero(dim)
@@ -140,6 +150,7 @@ class FluxTransformerBlock(nn.Module):
             raise ValueError(
                 "The current PyTorch version does not support the `scaled_dot_product_attention` function."
             )
+        self.layer_id = layer_id
         self.attn = Attention(
             query_dim=dim,
             cross_attention_dim=None,
@@ -179,12 +190,20 @@ class FluxTransformerBlock(nn.Module):
         )
         joint_attention_kwargs = joint_attention_kwargs or {}
         # Attention.
-        attention_outputs = self.attn(
-            hidden_states=norm_hidden_states,
-            encoder_hidden_states=norm_encoder_hidden_states,
-            image_rotary_emb=image_rotary_emb,
-            **joint_attention_kwargs,
-        )
+        
+        with get_timer("pab_attn"):
+            pab_manager = get_pab_manager()
+            if pab_manager.self_calc:
+                attention_outputs = self.attn(
+                    hidden_states=norm_hidden_states,
+                    encoder_hidden_states=norm_encoder_hidden_states,
+                    image_rotary_emb=image_rotary_emb,
+                    **joint_attention_kwargs,
+                )
+                pab_manager.self_attn_cache[self.layer_id] = attention_outputs
+            else:
+                attention_outputs = pab_manager.self_attn_cache[self.layer_id]
+            
 
         if len(attention_outputs) == 2:
             attn_output, context_attn_output = attention_outputs
@@ -221,7 +240,7 @@ class FluxTransformerBlock(nn.Module):
         return encoder_hidden_states, hidden_states
 
 
-class FluxTransformer2DModel(
+class FluxTransformer2DModel_pab(
     ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin, FluxTransformer2DLoadersMixin
 ):
     """
@@ -281,6 +300,7 @@ class FluxTransformer2DModel(
                     dim=self.inner_dim,
                     num_attention_heads=self.config.num_attention_heads,
                     attention_head_dim=self.config.attention_head_dim,
+                    layer_id=i
                 )
                 for i in range(self.config.num_layers)
             ]
@@ -292,6 +312,7 @@ class FluxTransformer2DModel(
                     dim=self.inner_dim,
                     num_attention_heads=self.config.num_attention_heads,
                     attention_head_dim=self.config.attention_head_dim,
+                    layer_id=self.config.num_layers + i
                 )
                 for i in range(self.config.num_single_layers)
             ]

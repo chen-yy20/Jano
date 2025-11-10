@@ -15,19 +15,13 @@ WIDTH = 1024
 MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Flux-1"
 PROMPT = "A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background."
 
-pipe = FluxPipeline.from_pretrained(MODEL_PATH, torch_dtype=torch.bfloat16)
-pipe.transformer = FluxTransformer2DModel.from_pretrained(f"{MODEL_PATH}/transformer", torch_dtype=torch.bfloat16)
-# pipe.enable_model_cpu_offload() #save some VRAM by offloading the model to CPU. Remove this if you have enough GPU power
-pipe = pipe.to('cuda')
-print(f"Model loaded, GPU memory allocated: {torch.cuda.memory_allocated()/1024**2:.2f}MB", flush=True)
-
 ENABLE_JANO = 1
 ANALYZE_BLOCK_SIZE = (1, HEIGHT//128,  WIDTH//128)
 DIFFUSION_STENGTH = 0.8
 DIFFUSION_DISTANCE = 2
 STATIC_THRESH = 0.2
 MEDIUM_THRESH = 0.4
-WARMUP = 10
+WARMUP = 7
 TAG = f"W_{WARMUP}_B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]})_DS({DIFFUSION_STENGTH}-{DIFFUSION_DISTANCE})_S{STATIC_THRESH}_M{MEDIUM_THRESH}" if ENABLE_JANO else "ori"
 OUTPUT_DIR = f"./flux_results/jano_flux_result/{get_prompt_id(PROMPT)}"
 
@@ -49,7 +43,7 @@ init_jano(
         medium_thresh = MEDIUM_THRESH,
         medium_interval = 3,
         static_thresh = STATIC_THRESH,
-        static_interval = 10,
+        static_interval = 15,
     )
 
 save_dir = GlobalEnv.get_envs("save_dir")
@@ -60,9 +54,16 @@ os.makedirs(save_dir, exist_ok=True)
 # prompt = "A cat holding a sign that says hello world"
 prompt = PROMPT
 
-disable_timing()
 
+pipe = FluxPipeline.from_pretrained(MODEL_PATH, torch_dtype=torch.bfloat16)
+pipe.transformer = FluxTransformer2DModel.from_pretrained(f"{MODEL_PATH}/transformer", torch_dtype=torch.bfloat16)
+# pipe.enable_model_cpu_offload() #save some VRAM by offloading the model to CPU. Remove this if you have enough GPU power
+pipe = pipe.to('cuda')
+print(f"Model loaded, GPU memory allocated: {torch.cuda.memory_allocated()/1024**2:.2f}MB", flush=True)
+
+disable_timing()
 warmup = 3 # 大于等于2才有正确计时
+generator = torch.Generator("cuda").manual_seed(42)
 for _ in range(warmup):
     image = pipe(
         prompt,
@@ -73,7 +74,7 @@ for _ in range(warmup):
         guidance_scale=3.5,
         num_inference_steps=num_inference_steps,
         max_sequence_length=512,
-        generator=torch.Generator("cpu").manual_seed(42)
+        generator=generator
     ).images[0]
 
 
@@ -85,7 +86,7 @@ image = pipe(
     guidance_scale=3.5,
     num_inference_steps=num_inference_steps,
     max_sequence_length=512,
-    generator=torch.Generator("cpu").manual_seed(42)
+    generator=generator,
 ).images[0]
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)

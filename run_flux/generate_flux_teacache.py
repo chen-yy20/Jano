@@ -18,8 +18,6 @@ from utils.timer import init_timer, get_timer, print_time_statistics, save_time_
 from utils.quality_metric import evaluate_quality_with_origin
 from jano.stuff import get_prompt_id
 
-
-
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
@@ -27,9 +25,9 @@ MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Flux-1"
 PROMPT = "A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background."
 # Teacache 关键参数 
 # # 0.25 for 1.5x speedup, 0.4 for 1.8x speedup, 0.6 for 2.0x speedup, 0.8 for 2.25x speedup
-THRESH = 0.1
+THRESH = 0.2
 
-ENABLE_TEACACHE = 1
+ENABLE_TEACACHE = 0
 TAG = f"TEA{THRESH}" if ENABLE_TEACACHE else "ori"
 OUTPUT_DIR = f"./flux_results/teacache_flux_result/{get_prompt_id(PROMPT)}"
 
@@ -340,7 +338,6 @@ def teacache_forward(
 
 FluxTransformer2DModel.forward = teacache_forward
 num_inference_steps = 50
-seed = 42
 parser = argparse.ArgumentParser()
 # parser.add_argument("--model_path", type=str, required=True)
 # parser.add_argument("--prompt", type=str, required=True)
@@ -350,10 +347,7 @@ args = parser.parse_args()
 args.model_path = MODEL_PATH
 args.prompt = PROMPT
 args.output_dir = OUTPUT_DIR
-
-refine_prompt = PROMPT.replace(" ","_")[:20]
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-args.output = os.path.join(OUTPUT_DIR, f"T{THRESH}_{refine_prompt}.png")
+args.seed = 42
 
 pipeline = FluxPipeline.from_pretrained(args.model_path, torch_dtype=torch.bfloat16)
 pipeline.transformer = FluxTransformer2DModel.from_pretrained(f"{MODEL_PATH}/transformer", torch_dtype=torch.bfloat16)
@@ -370,7 +364,7 @@ pipeline.transformer.__class__.previous_residual = None
 
 
 pipeline.to("cuda")
-
+generator = torch.Generator("cuda").manual_seed(args.seed)
 disable_timing()
 for _ in range(warmup):
     img = pipeline(
@@ -378,7 +372,7 @@ for _ in range(warmup):
         num_inference_steps=num_inference_steps,
         height=1024,
         width=1024,
-        generator=torch.Generator("cuda").manual_seed(seed),
+        generator=generator,
         guidance_scale=3.5,
         max_sequence_length=512,
         ).images[0]
@@ -388,7 +382,7 @@ img = pipeline(
         num_inference_steps=num_inference_steps,
         height=1024,
         width=1024,
-        generator=torch.Generator("cuda").manual_seed(seed),
+        generator=generator,
         guidance_scale=3.5,
         max_sequence_length=512,
         ).images[0]

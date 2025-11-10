@@ -48,7 +48,7 @@ class ToCaSingleBlockForward:
             norm_hidden_states, gate = self.block.norm(hidden_states, emb=temb)
             
             # 1. 计算Attention（完整计算）
-            with get_timer("attn"):
+            with get_timer("compute_attn"):
                 joint_attention_kwargs = joint_attention_kwargs or {}
                 attn_output = self.block.attn(
                     hidden_states=norm_hidden_states,
@@ -77,7 +77,7 @@ class ToCaSingleBlockForward:
                     self.cache_dic['cache'][-1]['single_stream'][self.block_idx] = {}
                 
                 # 存储Attention输出（关键！）
-                with get_timer("attn"):
+                with get_timer("cache_attn"):
                     self.cache_dic['cache'][-1]['single_stream'][self.block_idx]['attn'] = attn_output.detach().clone()
                 
                 # 调试信息（仅第一层）

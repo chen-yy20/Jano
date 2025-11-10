@@ -37,7 +37,7 @@ from diffusers.models.modeling_outputs import Transformer2DModelOutput
 
 from jano.stuff import get_masked_timer, get_timestep
 from jano.mask_manager.flux_mask_manager import get_mask_manager
-from .attention_processor import FluxAttnProcessor2_0
+from .attention_processor import FluxAttnProcessor_jano, FluxAttnProcessor2_0
 from utils.envs import GlobalEnv
 
 
@@ -67,8 +67,12 @@ class FluxSingleTransformerBlock(nn.Module):
         self.proj_mlp = nn.Linear(dim, self.mlp_hidden_dim)
         self.act_mlp = nn.GELU(approximate="tanh")
         self.proj_out = nn.Linear(dim + self.mlp_hidden_dim, dim)
-
-        processor = FluxAttnProcessor2_0(layer_idx)
+        
+        if GlobalEnv.get_envs("enable_stdit"):
+            processor = FluxAttnProcessor_jano(layer_idx)
+        else:
+            processor = FluxAttnProcessor2_0()
+            
         self.attn = Attention(
             query_dim=dim,
             cross_attention_dim=None,
@@ -94,12 +98,11 @@ class FluxSingleTransformerBlock(nn.Module):
         mlp_hidden_states = self.act_mlp(self.proj_mlp(norm_hidden_states))
         joint_attention_kwargs = joint_attention_kwargs or {}
         
-        with get_masked_timer("attn"):
-            attn_output = self.attn(
-                hidden_states=norm_hidden_states,
-                image_rotary_emb=image_rotary_emb,
-                **joint_attention_kwargs,
-            )
+        attn_output = self.attn(
+            hidden_states=norm_hidden_states,
+            image_rotary_emb=image_rotary_emb,
+            **joint_attention_kwargs,
+        )
 
         hidden_states = torch.cat([attn_output, mlp_hidden_states], dim=2)
         gate = gate.unsqueeze(1)
@@ -134,7 +137,11 @@ class FluxTransformerBlock(nn.Module):
         self.norm1_context = AdaLayerNormZero(dim)
 
         if hasattr(F, "scaled_dot_product_attention"):
-            processor = FluxAttnProcessor2_0(layer_idx)
+            if GlobalEnv.get_envs("enable_stdit"):
+                processor = FluxAttnProcessor_jano(layer_idx)
+            else:
+                processor = FluxAttnProcessor2_0()
+
         else:
             raise ValueError(
                 "The current PyTorch version does not support the `scaled_dot_product_attention` function."
@@ -177,13 +184,12 @@ class FluxTransformerBlock(nn.Module):
         )
         joint_attention_kwargs = joint_attention_kwargs or {}
         # Attention.
-        with get_masked_timer("attn"):
-            attn_output, context_attn_output = self.attn(
-                hidden_states=norm_hidden_states,
-                encoder_hidden_states=norm_encoder_hidden_states,
-                image_rotary_emb=image_rotary_emb,
-                **joint_attention_kwargs,
-            )
+        attn_output, context_attn_output = self.attn(
+            hidden_states=norm_hidden_states,
+            encoder_hidden_states=norm_encoder_hidden_states,
+            image_rotary_emb=image_rotary_emb,
+            **joint_attention_kwargs,
+        )
 
         # Process attention outputs for the `hidden_states`.
         attn_output = gate_msa.unsqueeze(1) * attn_output
