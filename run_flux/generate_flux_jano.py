@@ -4,13 +4,16 @@ import os
 from jano import init_jano
 from jano.modules.flux.pipeline_flux import FluxPipeline
 from jano.modules.flux.transformer_flux import FluxTransformer2DModel
+from jano.stuff import get_prompt_id
 
-from utils.timer import print_time_statistics, enable_timing, disable_timing
+from utils.timer import print_time_statistics, enable_timing, disable_timing, save_time_statistics_to_file
 from utils.envs import GlobalEnv
+from utils.quality_metric import evaluate_quality_with_origin
 
+HEIGHT = 1024
+WIDTH = 1024
 MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Flux-1"
 PROMPT = "A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background."
-OUTPUT_DIR = "./jano_flux_result/"
 
 pipe = FluxPipeline.from_pretrained(MODEL_PATH, torch_dtype=torch.bfloat16)
 pipe.transformer = FluxTransformer2DModel.from_pretrained(f"{MODEL_PATH}/transformer", torch_dtype=torch.bfloat16)
@@ -18,20 +21,21 @@ pipe.transformer = FluxTransformer2DModel.from_pretrained(f"{MODEL_PATH}/transfo
 pipe = pipe.to('cuda')
 print(f"Model loaded, GPU memory allocated: {torch.cuda.memory_allocated()/1024**2:.2f}MB", flush=True)
 
-save_dir = OUTPUT_DIR
-num_inference_steps = 45
-
-HEIGHT = 1024
-WIDTH = 1024
+ENABLE_JANO = 1
 ANALYZE_BLOCK_SIZE = (1, HEIGHT//128, WIDTH//128)
 DIFFUSION_STENGTH = 0.8
 DIFFUSION_DISTANCE = 2
+TAG = f"B{ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]}_S{DIFFUSION_STENGTH}_D{DIFFUSION_DISTANCE}" if ENABLE_JANO else "ori"
+OUTPUT_DIR = f"./results/jano_flux_result/{get_prompt_id(PROMPT)}"
+
+save_dir = OUTPUT_DIR
+num_inference_steps = 50
 
 init_jano(
-        enable=True,
+        enable=ENABLE_JANO,
         model="flux",
         analyze_block_size=ANALYZE_BLOCK_SIZE,
-        tag = os.getenv("TAG", 'no_tag'),
+        tag = TAG,
         save_dir=OUTPUT_DIR,
         num_inference_steps=50,
         warmup_steps=7,
@@ -81,10 +85,12 @@ image = pipe(
     generator=torch.Generator("cpu").manual_seed(42)
 ).images[0]
 
-
-
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+output_path = os.path.join(OUTPUT_DIR, f"{TAG}_{get_prompt_id(PROMPT)}.png")
+image.save(output_path)
+print(f"Stored {output_path}!", flush=True)
 print_time_statistics()
+save_time_statistics_to_file(f"{OUTPUT_DIR}/{TAG}_time_stats.txt")
 
-prompt_name = prompt[:20].replace(" ", "_")
-img_save_path = os.path.join(save_dir, f"{prompt_name}.png")
-image.save(img_save_path)
+if ENABLE_JANO:
+    evaluate_quality_with_origin(output_path, TAG)

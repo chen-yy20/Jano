@@ -310,29 +310,26 @@ class MaskManager:
         # 分离文本和图像序列
         
         if self.step_level == 3:
-            with get_timer("level3_kv"):
-                # store
-                img_seq = x[:, :, txt_seq_len:, :]  # [B,H,img_S,D]
-                self.static_cache[state_key] = img_seq[:, :, self.static_bool_mask, :]
-                self.medium_cache[state_key] = img_seq[:, :, self.medium_bool_mask, :]
-                result = x
+            # store
+            img_seq = x[:, :, txt_seq_len:, :]  # [B,H,img_S,D]
+            self.static_cache[state_key] = img_seq[:, :, self.static_bool_mask, :]
+            self.medium_cache[state_key] = img_seq[:, :, self.medium_bool_mask, :]
+            result = x
                 
         elif self.step_level == 2:
-            with get_timer("level2_kv"):
-                # 分离文本和图像序列
-                img_seq = x[:, :, txt_seq_len:, :]  # [B,H,img_S,D]
-                self.medium_cache[state_key] = img_seq[:, :, self.medium_bool_mask_in_l2, :]
-                # # 恢复图像序列部分
-                result = torch.cat([x, self.static_cache[state_key]], dim=2) # 不重排，而是直接连接
+            # 分离文本和图像序列
+            img_seq = x[:, :, txt_seq_len:, :]  # [B,H,img_S,D]
+            self.medium_cache[state_key] = img_seq[:, :, self.medium_bool_mask_in_l2, :]
+            # # 恢复图像序列部分
+            result = torch.cat([x, self.static_cache[state_key]], dim=2) # 不重排，而是直接连接
 
         elif self.step_level == 1:
-            with get_timer("level1_kv"):
-                medium_seq = self.medium_cache[state_key]
-                static_seq = self.static_cache[state_key]
-                # print(f"{get_timestep()} | {medium_seq.shape=} {static_seq.shape=}", flush=True)
-                result = torch.cat([x, medium_seq , static_seq], dim=2)
-                if layer_idx == 20:
-                    print(f"{get_timestep()} | Fetch from {state_key}, {static_seq.shape=} {medium_seq.shape=}", flush=True)
+            medium_seq = self.medium_cache[state_key]
+            static_seq = self.static_cache[state_key]
+            # print(f"{get_timestep()} | {medium_seq.shape=} {static_seq.shape=}", flush=True)
+            result = torch.cat([x, medium_seq , static_seq], dim=2)
+            if layer_idx == 20:
+                print(f"{get_timestep()} | Fetch from {state_key}, {static_seq.shape=} {medium_seq.shape=}", flush=True)
 
                 
         return result.chunk(2, dim=0)

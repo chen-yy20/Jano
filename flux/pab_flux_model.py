@@ -12,6 +12,7 @@ import types
 import logging
 
 from .pab_manager import enable_pab
+from utils.timer import get_timer
 
 
 def wrap_flux_forward_with_pab(model):
@@ -27,6 +28,7 @@ def wrap_flux_forward_with_pab(model):
     # Save original forward
     original_forward = model.forward
     
+    @get_timer("dit_pab")
     def forward_with_pab(
         self,
         hidden_states: Tensor,

@@ -31,17 +31,17 @@ sys.path.insert(0, flux_src_path)
 sys.path.insert(0, current_dir)
 
 import torch
-from diffusers import FluxPipeline, DiffusionPipeline
-
+# from diffusers import FluxPipeline, DiffusionPipeline
+from flux.pipeline_flux import FluxPipeline
+from flux.transformer_flux import FluxTransformer2DModel
 # Import PAB modules
 from flux.pab_manager import PABConfig, set_pab_manager, update_steps, enable_pab as check_pab_enabled
 from flux.pab_diffusers import apply_pab_to_model, reset_model_pab_cache, reset_pab_stats, get_pab_stats
 from flux.pab_flux_model import wrap_flux_forward_with_pab
 
-from utils.timer import init_timer, print_time_statistics, save_time_statistics_to_file
+from utils.timer import init_timer, get_timer, print_time_statistics, save_time_statistics_to_file, disable_timing, enable_timing
+from utils.quality_metric import evaluate_quality_with_origin
 from jano.stuff import get_prompt_id
-
-
 
 MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Flux-1"
 PROMPT = "A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background."
@@ -49,10 +49,10 @@ SELF_RANGE = 2
 CROSS_RANGE = 5
 ENABLE_PAB = 1
 TAG = f"s{SELF_RANGE}c{CROSS_RANGE}" if ENABLE_PAB else "ori"
-OUTPUT_DIR = f"./results/pab_wan_result/{get_prompt_id(PROMPT)}"
-ENABLE_PAB = True
+OUTPUT_DIR = f"./results/pab_flux_result/{get_prompt_id(PROMPT)}"
 
 init_timer()
+warmup = 3
 
 def setup_logging():
     """Configure logging"""
@@ -110,23 +110,20 @@ def parse_args():
     parser.add_argument('--pab_cross_range', type=int, default=5,
                         help='Cross-attention broadcast interval')
     
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.model_path = MODEL_PATH
+    args.prompt = PROMPT
+    args.enable_pab = ENABLE_PAB
+    args.pab_self_range = SELF_RANGE
+    args.pab_cross_range = CROSS_RANGE
+    args.output_dir = OUTPUT_DIR
+    
+    return args
 
 
 def main():
     setup_logging()
     args = parse_args()
-    
-    args.model_path = MODEL_PATH
-    args.prompt = PROMPT
-    args.enable_pab = ENABLE_PAB
-
-    refine_prompt = PROMPT.replace(" ","_")[:20]
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    args.output = os.path.join(OUTPUT_DIR, f"sr{args.pab_self_range}_{refine_prompt}.png")
-    
-    # Create output directory
-    os.makedirs(args.output_dir, exist_ok=True)
     
     logging.info("="*60)
     logging.info("Flux Image Generation with PAB")
@@ -154,14 +151,8 @@ def main():
     logging.info(f"\nLoading Flux model from: {args.model_path}")
     
     try:
-        # pipe = FluxPipeline.from_pretrained(
-        #     args.model_path,
-        #     torch_dtype=torch.bfloat16,
-        #     low_cpu_mem_usage=False
-        # )
-        
-        pipe = DiffusionPipeline.from_pretrained(args.model_path, torch_dtype=torch.bfloat16)
-
+        pipe = FluxPipeline.from_pretrained(args.model_path, torch_dtype=torch.bfloat16)
+        pipe.transformer = FluxTransformer2DModel.from_pretrained(f"{MODEL_PATH}/transformer", torch_dtype=torch.bfloat16)
     except Exception as e:
         logging.error(f"Failed to load model: {e}")
         logging.error("Please ensure the model path is correct and the model is downloaded.")
@@ -202,38 +193,47 @@ def main():
     
     logging.info(f"\nStarting generation...")
     
-    # Record start time
-    start_time = time.time()
-    
     # Generate
     generator = torch.Generator("cuda").manual_seed(args.seed)
+    disable_timing()
+    for _ in range(warmup):
+        image = pipe(
+            args.prompt,
+            height=args.height,
+            width=args.width,
+            guidance_scale=args.guidance_scale,
+            num_inference_steps=args.num_inference_steps,
+            max_sequence_length=args.max_sequence_length,
+            generator=generator
+        ).images[0]
+        
+    enable_timing()
     image = pipe(
-        args.prompt,
-        height=args.height,
-        width=args.width,
-        guidance_scale=args.guidance_scale,
-        num_inference_steps=args.num_inference_steps,
-        max_sequence_length=args.max_sequence_length,
-        generator=generator
-    ).images[0]
-    
-    # Record end time
-    end_time = time.time()
-    generation_time = end_time - start_time
+            args.prompt,
+            height=args.height,
+            width=args.width,
+            guidance_scale=args.guidance_scale,
+            num_inference_steps=args.num_inference_steps,
+            max_sequence_length=args.max_sequence_length,
+            generator=generator
+        ).images[0]
     
     # ==================== Save Image ====================
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    pab_suffix = "_pab" if args.enable_pab else "_baseline"
-   
-    
+    # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    args.output = os.path.join(OUTPUT_DIR, f"{TAG}_{get_prompt_id(PROMPT)}.png")
     image.save(args.output)
+    save_time_statistics_to_file(f"{OUTPUT_DIR}/{TAG}_time_stats.txt")
+    if ENABLE_PAB:
+        abs_path = os.path.abspath(args.output)
+        evaluate_quality_with_origin(abs_path, TAG)
     
     # ==================== Output Statistics ====================
     logging.info(f"\n" + "="*60)
     logging.info(f"Generation Complete!")
     logging.info(f"="*60)
     logging.info(f"  Image saved to: {args.output}")
-    logging.info(f"  Generation time: {generation_time:.2f} seconds")
+    # logging.info(f"  Generation time: {generation_time:.2f} seconds")
     
     if args.enable_pab:
         logging.info(f"  PAB Acceleration: Enabled")

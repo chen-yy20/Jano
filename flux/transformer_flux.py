@@ -21,25 +21,24 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
-from diffusers.loaders import FromOriginalModelMixin, PeftAdapterMixin
+from diffusers.loaders import FluxTransformer2DLoadersMixin, FromOriginalModelMixin, PeftAdapterMixin
 from diffusers.models.attention import FeedForward
 from diffusers.models.attention_processor import (
     Attention,
     AttentionProcessor,
-    FusedFluxAttnProcessor2_0
+    FluxAttnProcessor2_0,
+    FluxAttnProcessor2_0_NPU,
+    FusedFluxAttnProcessor2_0,
 )
 from diffusers.models.modeling_utils import ModelMixin
 from diffusers.models.normalization import AdaLayerNormContinuous, AdaLayerNormZero, AdaLayerNormZeroSingle
 from diffusers.utils import USE_PEFT_BACKEND, is_torch_version, logging, scale_lora_layers, unscale_lora_layers
+from diffusers.utils.import_utils import is_torch_npu_available
 from diffusers.utils.torch_utils import maybe_allow_in_graph
 from diffusers.models.embeddings import CombinedTimestepGuidanceTextProjEmbeddings, CombinedTimestepTextProjEmbeddings, FluxPosEmbed
 from diffusers.models.modeling_outputs import Transformer2DModelOutput
 
-from jano.stuff import get_masked_timer, get_timestep
-from jano.mask_manager.flux_mask_manager import get_mask_manager
-from .attention_processor import FluxAttnProcessor2_0
-from utils.envs import GlobalEnv
-
+from utils.timer import get_timer
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -59,7 +58,7 @@ class FluxSingleTransformerBlock(nn.Module):
             processing of `context` conditions.
     """
 
-    def __init__(self, dim, num_attention_heads, attention_head_dim, mlp_ratio=4.0, layer_idx=-1):
+    def __init__(self, dim, num_attention_heads, attention_head_dim, mlp_ratio=4.0):
         super().__init__()
         self.mlp_hidden_dim = int(dim * mlp_ratio)
 
@@ -68,7 +67,10 @@ class FluxSingleTransformerBlock(nn.Module):
         self.act_mlp = nn.GELU(approximate="tanh")
         self.proj_out = nn.Linear(dim + self.mlp_hidden_dim, dim)
 
-        processor = FluxAttnProcessor2_0(layer_idx)
+        if is_torch_npu_available():
+            processor = FluxAttnProcessor2_0_NPU()
+        else:
+            processor = FluxAttnProcessor2_0()
         self.attn = Attention(
             query_dim=dim,
             cross_attention_dim=None,
@@ -94,7 +96,7 @@ class FluxSingleTransformerBlock(nn.Module):
         mlp_hidden_states = self.act_mlp(self.proj_mlp(norm_hidden_states))
         joint_attention_kwargs = joint_attention_kwargs or {}
         
-        with get_masked_timer("attn"):
+        with get_timer("attn"):
             attn_output = self.attn(
                 hidden_states=norm_hidden_states,
                 image_rotary_emb=image_rotary_emb,
@@ -126,7 +128,7 @@ class FluxTransformerBlock(nn.Module):
             processing of `context` conditions.
     """
 
-    def __init__(self, dim, num_attention_heads, attention_head_dim, qk_norm="rms_norm", eps=1e-6, layer_idx=-1):
+    def __init__(self, dim, num_attention_heads, attention_head_dim, qk_norm="rms_norm", eps=1e-6):
         super().__init__()
 
         self.norm1 = AdaLayerNormZero(dim)
@@ -134,7 +136,7 @@ class FluxTransformerBlock(nn.Module):
         self.norm1_context = AdaLayerNormZero(dim)
 
         if hasattr(F, "scaled_dot_product_attention"):
-            processor = FluxAttnProcessor2_0(layer_idx)
+            processor = FluxAttnProcessor2_0()
         else:
             raise ValueError(
                 "The current PyTorch version does not support the `scaled_dot_product_attention` function."
@@ -172,18 +174,23 @@ class FluxTransformerBlock(nn.Module):
         joint_attention_kwargs=None,
     ):
         norm_hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp = self.norm1(hidden_states, emb=temb)
+
         norm_encoder_hidden_states, c_gate_msa, c_shift_mlp, c_scale_mlp, c_gate_mlp = self.norm1_context(
             encoder_hidden_states, emb=temb
         )
         joint_attention_kwargs = joint_attention_kwargs or {}
         # Attention.
-        with get_masked_timer("attn"):
-            attn_output, context_attn_output = self.attn(
-                hidden_states=norm_hidden_states,
-                encoder_hidden_states=norm_encoder_hidden_states,
-                image_rotary_emb=image_rotary_emb,
-                **joint_attention_kwargs,
-            )
+        attention_outputs = self.attn(
+            hidden_states=norm_hidden_states,
+            encoder_hidden_states=norm_encoder_hidden_states,
+            image_rotary_emb=image_rotary_emb,
+            **joint_attention_kwargs,
+        )
+
+        if len(attention_outputs) == 2:
+            attn_output, context_attn_output = attention_outputs
+        elif len(attention_outputs) == 3:
+            attn_output, context_attn_output, ip_attn_output = attention_outputs
 
         # Process attention outputs for the `hidden_states`.
         attn_output = gate_msa.unsqueeze(1) * attn_output
@@ -196,6 +203,8 @@ class FluxTransformerBlock(nn.Module):
         ff_output = gate_mlp.unsqueeze(1) * ff_output
 
         hidden_states = hidden_states + ff_output
+        if len(attention_outputs) == 3:
+            hidden_states = hidden_states + ip_attn_output
 
         # Process attention outputs for the `encoder_hidden_states`.
 
@@ -213,7 +222,9 @@ class FluxTransformerBlock(nn.Module):
         return encoder_hidden_states, hidden_states
 
 
-class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin):
+class FluxTransformer2DModel(
+    ModelMixin, ConfigMixin, PeftAdapterMixin, FromOriginalModelMixin, FluxTransformer2DLoadersMixin
+):
     """
     The Transformer model introduced in Flux.
 
@@ -239,6 +250,7 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
         self,
         patch_size: int = 1,
         in_channels: int = 64,
+        out_channels: Optional[int] = None,
         num_layers: int = 19,
         num_single_layers: int = 38,
         attention_head_dim: int = 128,
@@ -249,7 +261,7 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
         axes_dims_rope: Tuple[int] = (16, 56, 56),
     ):
         super().__init__()
-        self.out_channels = in_channels
+        self.out_channels = out_channels or in_channels
         self.inner_dim = self.config.num_attention_heads * self.config.attention_head_dim
 
         self.pos_embed = FluxPosEmbed(theta=10000, axes_dim=axes_dims_rope)
@@ -262,7 +274,7 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
         )
 
         self.context_embedder = nn.Linear(self.config.joint_attention_dim, self.inner_dim)
-        self.x_embedder = torch.nn.Linear(self.config.in_channels, self.inner_dim)
+        self.x_embedder = nn.Linear(self.config.in_channels, self.inner_dim)
 
         self.transformer_blocks = nn.ModuleList(
             [
@@ -270,7 +282,6 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
                     dim=self.inner_dim,
                     num_attention_heads=self.config.num_attention_heads,
                     attention_head_dim=self.config.attention_head_dim,
-                    layer_idx=i,
                 )
                 for i in range(self.config.num_layers)
             ]
@@ -282,7 +293,6 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
                     dim=self.inner_dim,
                     num_attention_heads=self.config.num_attention_heads,
                     attention_head_dim=self.config.attention_head_dim,
-                    layer_idx=self.config.num_layers + i,
                 )
                 for i in range(self.config.num_single_layers)
             ]
@@ -397,6 +407,7 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
         if hasattr(module, "gradient_checkpointing"):
             module.gradient_checkpointing = value
 
+    @get_timer("dit")
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -452,22 +463,21 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
                 logger.warning(
                     "Passing `scale` via `joint_attention_kwargs` when not using the PEFT backend is ineffective."
                 )
-                
-        # 1, 4096, 64
+
         hidden_states = self.x_embedder(hidden_states)
-        # 1, 4096, 3072
 
         timestep = timestep.to(hidden_states.dtype) * 1000
         if guidance is not None:
             guidance = guidance.to(hidden_states.dtype) * 1000
         else:
             guidance = None
+
         temb = (
             self.time_text_embed(timestep, pooled_projections)
             if guidance is None
             else self.time_text_embed(timestep, guidance, pooled_projections)
         )
-        encoder_hidden_states = self.context_embedder(encoder_hidden_states) # 512
+        encoder_hidden_states = self.context_embedder(encoder_hidden_states)
 
         if txt_ids.ndim == 3:
             logger.warning(
@@ -484,122 +494,98 @@ class FluxTransformer2DModel(ModelMixin, ConfigMixin, PeftAdapterMixin, FromOrig
 
         ids = torch.cat((txt_ids, img_ids), dim=0)
         image_rotary_emb = self.pos_embed(ids)
-        
-        mask_manager = get_mask_manager()
-            
-        if mask_manager is None:
-            GlobalEnv.set_envs("timer_prefix", "full")
-        else:
-            mask_manager.update_step_level()
-            level = mask_manager.step_level
-            if level == 0:
-                GlobalEnv.set_envs("timer_prefix", "full")
-            elif level == 1:
-                GlobalEnv.set_envs("timer_prefix", "1")
-            elif level == 2:
-                GlobalEnv.set_envs("timer_prefix", "2")
-            elif level == 3:
-                GlobalEnv.set_envs("timer_prefix", "3")
-            if level != 0:   
-                print(f"{get_timestep()} | level {level}.", flush=True)
-            
-        with get_masked_timer("DiT"):
-            
-            if mask_manager is not None:
-                hidden_states = mask_manager.apply_sequence_mask(hidden_states, txt_seq_len=0)
-                # set timer name
-            
-            for index_block, block in enumerate(self.transformer_blocks):
-                if self.training and self.gradient_checkpointing:
 
-                    def create_custom_forward(module, return_dict=None):
-                        def custom_forward(*inputs):
-                            if return_dict is not None:
-                                return module(*inputs, return_dict=return_dict)
-                            else:
-                                return module(*inputs)
+        if joint_attention_kwargs is not None and "ip_adapter_image_embeds" in joint_attention_kwargs:
+            ip_adapter_image_embeds = joint_attention_kwargs.pop("ip_adapter_image_embeds")
+            ip_hidden_states = self.encoder_hid_proj(ip_adapter_image_embeds)
+            joint_attention_kwargs.update({"ip_hidden_states": ip_hidden_states})
 
-                        return custom_forward
+        for index_block, block in enumerate(self.transformer_blocks):
+            if torch.is_grad_enabled() and self.gradient_checkpointing:
 
-                    ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                    encoder_hidden_states, hidden_states = torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(block),
-                        hidden_states,
-                        encoder_hidden_states,
-                        temb,
-                        image_rotary_emb,
-                        **ckpt_kwargs,
+                def create_custom_forward(module, return_dict=None):
+                    def custom_forward(*inputs):
+                        if return_dict is not None:
+                            return module(*inputs, return_dict=return_dict)
+                        else:
+                            return module(*inputs)
+
+                    return custom_forward
+
+                ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+                encoder_hidden_states, hidden_states = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(block),
+                    hidden_states,
+                    encoder_hidden_states,
+                    temb,
+                    image_rotary_emb,
+                    **ckpt_kwargs,
+                )
+
+            else:
+                encoder_hidden_states, hidden_states = block(
+                    hidden_states=hidden_states,
+                    encoder_hidden_states=encoder_hidden_states,
+                    temb=temb,
+                    image_rotary_emb=image_rotary_emb,
+                    joint_attention_kwargs=joint_attention_kwargs,
+                )
+
+            # controlnet residual
+            if controlnet_block_samples is not None:
+                interval_control = len(self.transformer_blocks) / len(controlnet_block_samples)
+                interval_control = int(np.ceil(interval_control))
+                # For Xlabs ControlNet.
+                if controlnet_blocks_repeat:
+                    hidden_states = (
+                        hidden_states + controlnet_block_samples[index_block % len(controlnet_block_samples)]
                     )
-
                 else:
-                    encoder_hidden_states, hidden_states = block(
-                        hidden_states=hidden_states,
-                        encoder_hidden_states=encoder_hidden_states,
-                        temb=temb,
-                        image_rotary_emb=image_rotary_emb,
-                        joint_attention_kwargs=joint_attention_kwargs,
-                    )
+                    hidden_states = hidden_states + controlnet_block_samples[index_block // interval_control]
+        hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
 
-                # controlnet residual
-                if controlnet_block_samples is not None:
-                    interval_control = len(self.transformer_blocks) / len(controlnet_block_samples)
-                    interval_control = int(np.ceil(interval_control))
-                    # For Xlabs ControlNet.
-                    if controlnet_blocks_repeat:
-                        hidden_states = (
-                            hidden_states + controlnet_block_samples[index_block % len(controlnet_block_samples)]
-                        )
-                    else:
-                        hidden_states = hidden_states + controlnet_block_samples[index_block // interval_control]
+        for index_block, block in enumerate(self.single_transformer_blocks):
+            if torch.is_grad_enabled() and self.gradient_checkpointing:
 
-            hidden_states = torch.cat([encoder_hidden_states, hidden_states], dim=1)
+                def create_custom_forward(module, return_dict=None):
+                    def custom_forward(*inputs):
+                        if return_dict is not None:
+                            return module(*inputs, return_dict=return_dict)
+                        else:
+                            return module(*inputs)
 
-            for index_block, block in enumerate(self.single_transformer_blocks):
-                if self.training and self.gradient_checkpointing:
+                    return custom_forward
 
-                    def create_custom_forward(module, return_dict=None):
-                        def custom_forward(*inputs):
-                            if return_dict is not None:
-                                return module(*inputs, return_dict=return_dict)
-                            else:
-                                return module(*inputs)
+                ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
+                hidden_states = torch.utils.checkpoint.checkpoint(
+                    create_custom_forward(block),
+                    hidden_states,
+                    temb,
+                    image_rotary_emb,
+                    **ckpt_kwargs,
+                )
 
-                        return custom_forward
+            else:
+                hidden_states = block(
+                    hidden_states=hidden_states,
+                    temb=temb,
+                    image_rotary_emb=image_rotary_emb,
+                    joint_attention_kwargs=joint_attention_kwargs,
+                )
 
-                    ckpt_kwargs: Dict[str, Any] = {"use_reentrant": False} if is_torch_version(">=", "1.11.0") else {}
-                    hidden_states = torch.utils.checkpoint.checkpoint(
-                        create_custom_forward(block),
-                        hidden_states,
-                        temb,
-                        image_rotary_emb,
-                        **ckpt_kwargs,
-                    )
+            # controlnet residual
+            if controlnet_single_block_samples is not None:
+                interval_control = len(self.single_transformer_blocks) / len(controlnet_single_block_samples)
+                interval_control = int(np.ceil(interval_control))
+                hidden_states[:, encoder_hidden_states.shape[1] :, ...] = (
+                    hidden_states[:, encoder_hidden_states.shape[1] :, ...]
+                    + controlnet_single_block_samples[index_block // interval_control]
+                )
 
-                else:
-                    hidden_states = block(
-                        hidden_states=hidden_states,
-                        temb=temb,
-                        image_rotary_emb=image_rotary_emb,
-                        joint_attention_kwargs=joint_attention_kwargs,
-                    )
+        hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
 
-                # controlnet residual
-                if controlnet_single_block_samples is not None:
-                    print("CONTROLNET!")
-                    interval_control = len(self.single_transformer_blocks) / len(controlnet_single_block_samples)
-                    interval_control = int(np.ceil(interval_control))
-                    hidden_states[:, encoder_hidden_states.shape[1] :, ...] = (
-                        hidden_states[:, encoder_hidden_states.shape[1] :, ...]
-                        + controlnet_single_block_samples[index_block // interval_control]
-                    )
-
-            hidden_states = hidden_states[:, encoder_hidden_states.shape[1] :, ...]
-
-            hidden_states = self.norm_out(hidden_states, temb)
-            output = self.proj_out(hidden_states)
-            
-            if mask_manager is not None:
-                output = mask_manager.process_masked_sequence(output, "output", layer_idx=-1)
+        hidden_states = self.norm_out(hidden_states, temb)
+        output = self.proj_out(hidden_states)
 
         if USE_PEFT_BACKEND:
             # remove `lora_scale` from each PEFT layer

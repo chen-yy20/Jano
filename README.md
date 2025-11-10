@@ -9,7 +9,7 @@
 * Wan2.1-1.3B-T2V
 * Wan2.1-14B-T2V
 
-如果运行报错找不到utils模块等，请更新python path
+如果运行报错ModuleNotFoundError，请更新python path:
 ```
 export PYTHONPATH=$PYTHONPATH:$(pwd)
 ```

@@ -9,6 +9,10 @@ from matplotlib.colors import ListedColormap
 from .block_manager import get_block_manager
 from utils.envs import GlobalEnv
 
+from datetime import datetime
+
+def get_time_str():
+    return datetime.now().strftime('%Y%m%d_%H%M%S')
 
 def get_prompt_id(prompt):
     # 取关键词并过滤掉常用词

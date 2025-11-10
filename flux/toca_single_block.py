@@ -10,6 +10,8 @@ import torch.nn.functional as F
 from typing import Optional, Dict, Any, Tuple
 from .toca_functions import cache_init, cal_type, cache_cutfresh, update_cache, force_init
 
+from utils.timer import get_timer
+
 
 class ToCaSingleBlockForward:
     """
@@ -46,12 +48,13 @@ class ToCaSingleBlockForward:
             norm_hidden_states, gate = self.block.norm(hidden_states, emb=temb)
             
             # 1. 计算Attention（完整计算）
-            joint_attention_kwargs = joint_attention_kwargs or {}
-            attn_output = self.block.attn(
-                hidden_states=norm_hidden_states,
-                image_rotary_emb=image_rotary_emb,
-                **joint_attention_kwargs,
-            )
+            with get_timer("attn"):
+                joint_attention_kwargs = joint_attention_kwargs or {}
+                attn_output = self.block.attn(
+                    hidden_states=norm_hidden_states,
+                    image_rotary_emb=image_rotary_emb,
+                    **joint_attention_kwargs,
+                )
             
             # 2. 计算MLP（完整计算）
             mlp_hidden_states = self.block.act_mlp(self.block.proj_mlp(norm_hidden_states))
@@ -74,7 +77,8 @@ class ToCaSingleBlockForward:
                     self.cache_dic['cache'][-1]['single_stream'][self.block_idx] = {}
                 
                 # 存储Attention输出（关键！）
-                self.cache_dic['cache'][-1]['single_stream'][self.block_idx]['attn'] = attn_output.detach().clone()
+                with get_timer("attn"):
+                    self.cache_dic['cache'][-1]['single_stream'][self.block_idx]['attn'] = attn_output.detach().clone()
                 
                 # 调试信息（仅第一层）
                 if self.block_idx == 0 and self.current['step'] < 3:

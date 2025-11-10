@@ -102,8 +102,7 @@ class FluxAttnProcessor2_0:
             # key, value = manager.process_masked_kv_sequence_optimized(key, value, layer_idx=self.layer_idx, txt_seq_len=txt_seq_len)
             key, value = manager.process_masked_kv_sequence(key, value, layer_idx=self.layer_idx, txt_seq_len=txt_seq_len)
             # print(f"{get_timestep()} | level {manager.step_level}, {query.shape=} {key.shape=} {value.shape=}", flush=True)
-        with get_masked_timer("sdpa"):
-            hidden_states = F.scaled_dot_product_attention(query, key, value, dropout_p=0.0, is_causal=False)
+        hidden_states = F.scaled_dot_product_attention(query, key, value, dropout_p=0.0, is_causal=False)
         hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, -1, attn.heads * head_dim)
         hidden_states = hidden_states.to(query.dtype)
 
