@@ -256,7 +256,7 @@ class QualityEvaluator:
         return metrics
     
     def evaluate_videos(self, generated_path: str, reference_path: str, 
-                       max_frames: Optional[int] = None) -> Dict[str, Union[float, Dict]]:
+                       max_frames: Optional[int] = None) -> Dict[str, float]:
         """
         Evaluate quality metrics between two videos (frame by frame)
         
@@ -266,7 +266,7 @@ class QualityEvaluator:
             max_frames: Maximum number of frames to compare (None for all)
             
         Returns:
-            Dictionary containing average metrics and frame-by-frame metrics
+            Dictionary containing only average metrics (psnr, ssim, lpips)
         """
         # Check if reference file exists
         if not os.path.exists(reference_path):
@@ -282,7 +282,9 @@ class QualityEvaluator:
         if not cap_gen.isOpened() or not cap_ref.isOpened():
             raise ValueError("Failed to open video files")
         
-        frame_metrics = []
+        psnr_values = []
+        ssim_values = []
+        lpips_values = []
         frame_idx = 0
         
         try:
@@ -304,24 +306,25 @@ class QualityEvaluator:
                 img_gen, img_ref = self.resize_to_match(img_gen, img_ref)
                 
                 # Compute metrics for this frame
-                frame_metric = {}
+                try:
+                    psnr_val = self.compute_psnr(img_ref, img_gen)
+                    psnr_values.append(psnr_val)
+                except:
+                    pass
                 
                 try:
-                    frame_metric['psnr'] = self.compute_psnr(img_ref, img_gen)
+                    ssim_val = self.compute_ssim(img_ref, img_gen)
+                    ssim_values.append(ssim_val)
                 except:
-                    frame_metric['psnr'] = None
+                    pass
                 
                 try:
-                    frame_metric['ssim'] = self.compute_ssim(img_ref, img_gen)
+                    lpips_val = self.compute_lpips(img_ref, img_gen)
+                    if lpips_val is not None:
+                        lpips_values.append(lpips_val)
                 except:
-                    frame_metric['ssim'] = None
+                    pass
                 
-                try:
-                    frame_metric['lpips'] = self.compute_lpips(img_ref, img_gen)
-                except:
-                    frame_metric['lpips'] = None
-                
-                frame_metrics.append(frame_metric)
                 frame_idx += 1
                 
                 if frame_idx % 30 == 0:  # Progress logging
@@ -331,27 +334,30 @@ class QualityEvaluator:
             cap_gen.release()
             cap_ref.release()
         
-        if not frame_metrics:
+        if frame_idx == 0:
             raise ValueError("No frames could be processed")
         
-        # Compute average metrics
-        avg_metrics = {}
+        # Compute average metrics - only return the 3 average values
+        metrics = {}
         
-        # Calculate averages, ignoring None values
-        for metric in ['psnr', 'ssim', 'lpips']:
-            values = [fm[metric] for fm in frame_metrics if fm[metric] is not None]
-            if values:
-                avg_metrics[f'avg_{metric}'] = np.mean(values)
-                avg_metrics[f'std_{metric}'] = np.std(values)
-            else:
-                avg_metrics[f'avg_{metric}'] = None
-                avg_metrics[f'std_{metric}'] = None
+        if psnr_values:
+            metrics['psnr'] = float(np.mean(psnr_values))
+        else:
+            metrics['psnr'] = None
+            
+        if ssim_values:
+            metrics['ssim'] = float(np.mean(ssim_values))
+        else:
+            metrics['ssim'] = None
+            
+        if lpips_values:
+            metrics['lpips'] = float(np.mean(lpips_values))
+        else:
+            metrics['lpips'] = None
         
-        return {
-            'average_metrics': avg_metrics,
-            'frame_count': len(frame_metrics),
-            'frame_metrics': frame_metrics
-        }
+        logging.info(f"Processed {frame_idx} frames total")
+        
+        return metrics
 
 
 def evaluate_image_quality(generated_path: str, reference_path: str, 
@@ -423,6 +429,7 @@ def evaluate_quality_with_origin(image_path: str, tag: str):
         # 执行质量评测
         logging.info(f"Evaluating quality against baseline: {baseline_path}")
         result = evaluate_image_quality(image_path, baseline_path, metrics_path)
+
         
         # 打印结果
         metrics = result['metrics']
@@ -484,28 +491,16 @@ def main():
         print(f"File Type: {result['file_type']}")
         print()
         
-        if result['file_type'] == 'image':
-            metrics = result['metrics']
-            print("Metrics:")
-            if metrics.get('psnr') is not None:
-                print(f"  PSNR: {metrics['psnr']:.4f} dB")
-            if metrics.get('ssim') is not None:
-                print(f"  SSIM: {metrics['ssim']:.4f}")
-            if metrics.get('lpips') is not None:
-                print(f"  LPIPS: {metrics['lpips']:.4f}")
-            else:
-                print("  LPIPS: Not available (install with: pip install lpips)")
-        else:  # video
-            avg_metrics = result['metrics']['average_metrics']
-            print(f"Average Metrics ({result['metrics']['frame_count']} frames):")
-            if avg_metrics.get('avg_psnr') is not None:
-                print(f"  PSNR: {avg_metrics['avg_psnr']:.4f} ± {avg_metrics['std_psnr']:.4f} dB")
-            if avg_metrics.get('avg_ssim') is not None:
-                print(f"  SSIM: {avg_metrics['avg_ssim']:.4f} ± {avg_metrics['std_ssim']:.4f}")
-            if avg_metrics.get('avg_lpips') is not None:
-                print(f"  LPIPS: {avg_metrics['avg_lpips']:.4f} ± {avg_metrics['std_lpips']:.4f}")
-            else:
-                print("  LPIPS: Not available (install with: pip install lpips)")
+        metrics = result['metrics']
+        print("Metrics:")
+        if metrics.get('psnr') is not None:
+            print(f"  PSNR: {metrics['psnr']:.4f} dB")
+        if metrics.get('ssim') is not None:
+            print(f"  SSIM: {metrics['ssim']:.4f}")
+        if metrics.get('lpips') is not None:
+            print(f"  LPIPS: {metrics['lpips']:.4f}")
+        else:
+            print("  LPIPS: Not available (install with: pip install lpips)")
         
         print("="*60)
         

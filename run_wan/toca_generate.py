@@ -24,16 +24,19 @@ from wan.jano_baselines.text2video_tocache import WanT2V_toca
 
 from utils.timer import init_timer, get_timer, print_time_statistics, save_time_statistics_to_file
 from jano.stuff import get_prompt_id
+from utils.quality_metric import evaluate_quality_with_origin
+
 from datetime import datetime
 time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
 
 init_timer()
 PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
 MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Wan2.1-T2V-1.3B" # 1.3B / 14B
-ENABLE_TOCA = True
+
+ENABLE_TOCA = 1
 
 TAG = "toca" if ENABLE_TOCA else "ori"
-OUTPUT_DIR = f"./results/toca_wan_result/{get_prompt_id(PROMPT)}"
+OUTPUT_DIR = f"./wan_results/tokencache_wan_result/{get_prompt_id(PROMPT)}"
 
 EXAMPLE_PROMPT = {
     "t2v-1.3B": {
@@ -654,3 +657,5 @@ if __name__ == "__main__":
     generate(args)
     print_time_statistics()
     save_time_statistics_to_file(f"{OUTPUT_DIR}/{TAG}_time_stats.txt")
+    if ENABLE_TOCA:
+        evaluate_quality_with_origin(args.save_file, TAG)

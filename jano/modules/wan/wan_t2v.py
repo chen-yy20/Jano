@@ -251,7 +251,10 @@ class WanT2V_jano:
             arg_c = {'context': context, 'seq_len': seq_len}
             arg_null = {'context': context_null, 'seq_len': seq_len}
             
-            with get_timer("dit_e2e"):
+            enable_jano = GlobalEnv.get_envs('enable_stdit')
+            warmup_step = GlobalEnv.get_envs('warmup_steps')
+            
+            with get_timer("generate_e2e"):
                 for step, t in enumerate(tqdm(timesteps)):
                     latent_model_input = latents    
                     timestep = [t]
@@ -292,7 +295,7 @@ class WanT2V_jano:
                     noise_pred = noise_pred_uncond + guide_scale * (noise_pred_cond - noise_pred_uncond)
                     
                     # Analyze feature and set mask
-                    if GlobalEnv.get_envs("enable_stdit"):
+                    if enable_jano and step <= warmup_steps:
                         # store_feature(noise_pred, step, 0, "feature")
                         analyze_result = analyzer.step(noise_pred)
                         if analyze_result is not None:
@@ -307,10 +310,10 @@ class WanT2V_jano:
                         generator=seed_g)[0]
                     latents = [temp_x0.squeeze(0)]
                     
-                    if GlobalEnv.get_envs("cc_exp") and t == timesteps[-1]:
-                        interval = GlobalEnv.get_envs("static_interval")
-                        store_feature(latents[0], step+1, 0, f"output_i{interval}")
-                        print(f"Step {step+1} | Stored {latents[0].shape=} for {interval=}. ", flush=True)
+                    # if GlobalEnv.get_envs("cc_exp") and t == timesteps[-1]:
+                    #     interval = GlobalEnv.get_envs("static_interval")
+                    #     store_feature(latents[0], step+1, 0, f"output_i{interval}")
+                    #     print(f"Step {step+1} | Stored {latents[0].shape=} for {interval=}. ", flush=True)
                     
 
             x0 = latents

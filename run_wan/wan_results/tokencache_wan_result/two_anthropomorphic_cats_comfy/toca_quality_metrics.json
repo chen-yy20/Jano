@@ -1,0 +1,11 @@
+{
+  "generated_path": "./wan_results/tokencache_wan_result/two_anthropomorphic_cats_comfy/t2v-1.3B_toca_two_anthropomorphic_cats_comfy.mp4",
+  "reference_path": "./wan_results/tokencache_wan_result/two_anthropomorphic_cats_comfy/t2v-1.3B_ori_two_anthropomorphic_cats_comfy.mp4",
+  "file_type": "video",
+  "metrics": {
+    "psnr": 15.283945471366945,
+    "ssim": 0.7083423172483503,
+    "lpips": 0.27736003163420125
+  },
+  "timestamp": "2025-11-10 18:32:22.315908"
+}

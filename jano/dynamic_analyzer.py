@@ -295,7 +295,7 @@ def visualize_block_dynamics(temporal_dynamics, spatial_dynamics, original_combi
     plt.tight_layout()
     
     # 保存图片
-    save_path = os.path.join(GlobalEnv.get_envs("save_dir"), f"block_dynamics_{save_name}.png")
+    save_path = os.path.join(GlobalEnv.get_envs("save_dir"), f"{save_name}_block_dynamics.png")
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()
     
@@ -312,13 +312,13 @@ def visualize_block_dynamics(temporal_dynamics, spatial_dynamics, original_combi
         'enhancement_ratio': float(enhancement_ratio)
     }
     
-    stats_path = os.path.join(GlobalEnv.get_envs("save_dir"), f"block_stats_{save_name}.txt")
+    # stats_path = os.path.join(GlobalEnv.get_envs("save_dir"), f"block_stats_{save_name}.txt")
     
-    with open(stats_path, 'w') as f:
-        for key, value in stats.items():
-            f.write(f"{key}: {value:.6f}\n")
+    # with open(stats_path, 'w') as f:
+    #     for key, value in stats.items():
+    #         f.write(f"{key}: {value:.6f}\n")
     
-    print(f"Block statistics saved to: {stats_path}")
+    # print(f"Block statistics saved to: {stats_path}")
     print(f"Enhancement ratio: {enhancement_ratio:.4f}")
     
     return save_path, stats

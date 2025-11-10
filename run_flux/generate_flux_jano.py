@@ -25,8 +25,10 @@ ENABLE_JANO = 1
 ANALYZE_BLOCK_SIZE = (1, HEIGHT//128, WIDTH//128)
 DIFFUSION_STENGTH = 0.8
 DIFFUSION_DISTANCE = 2
-TAG = f"B{ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]}_S{DIFFUSION_STENGTH}_D{DIFFUSION_DISTANCE}" if ENABLE_JANO else "ori"
-OUTPUT_DIR = f"./results/jano_flux_result/{get_prompt_id(PROMPT)}"
+STATIC_THRESH = 0.2
+MEDIUM_THRESH = 0.4
+TAG = f"B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]})_DS({DIFFUSION_STENGTH}-{DIFFUSION_DISTANCE})_S{STATIC_THRESH}_M{MEDIUM_THRESH}" if ENABLE_JANO else "ori"
+OUTPUT_DIR = f"./flux_results/jano_flux_result/{get_prompt_id(PROMPT)}"
 
 save_dir = OUTPUT_DIR
 num_inference_steps = 50
@@ -43,9 +45,9 @@ init_jano(
         t_weight=0,
         d_strength=DIFFUSION_STENGTH,
         d_distance=DIFFUSION_DISTANCE,
-        medium_thresh = 0.5,
+        medium_thresh = MEDIUM_THRESH,
         medium_interval = 3,
-        static_thresh = 0.2,
+        static_thresh = STATIC_THRESH,
         static_interval = 10,
     )
 

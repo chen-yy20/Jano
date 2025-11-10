@@ -23,10 +23,11 @@ from wan.utils.utils import cache_image, cache_video, str2bool
 from jano.modules.wan.wan_t2v import WanT2V_jano
 # from stdit.distributed.parallel_state import init_distributed_environment, init_cp_group
 from jano import init_jano
+from jano.stuff import get_prompt_id
 
 from utils.envs import GlobalEnv
-from utils.timer import print_time_statistics
-
+from utils.timer import print_time_statistics, save_time_statistics_to_file
+from utils.quality_metric import evaluate_quality_with_origin
 
 # 主体
 PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
@@ -41,16 +42,18 @@ PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight 
 # PROMPT = "A simple white pendulum swinging back and forth against a plain black background. The pendulum moves in a clear, rhythmic motion, creating a hypnotic pattern through time while maintaining minimal spatial complexity."
 
 MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Wan2.1-T2V-1.3B" # 1.3B / 14B
-OUTPUT_DIR = "./jano_wan_result/"
-TAG = "test"
 
-ENABLE_JANO = True
 T_WEIGHT = 0.6
 DIFFUSION_STENGTH = 0.8
 DIFFUSION_DISTANCE = 2
 ANALYZE_BLOCK_SIZE = (7,6,8)
 STATIC_THRESH = 0.2
 MEDIUM_THRESH = 0.4
+
+ENABLE_JANO = 1
+
+TAG = f"B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]})_DS({DIFFUSION_STENGTH}-{DIFFUSION_DISTANCE})_S{STATIC_THRESH}_M{MEDIUM_THRESH}" if ENABLE_JANO else "ori"
+OUTPUT_DIR = f"./wan_results/jano_wan_result/{get_prompt_id(PROMPT)}"
 
 EXAMPLE_PROMPT = {
     "t2v-1.3B": {
@@ -277,6 +280,8 @@ def _parse_args():
         help="Classifier free guidance scale.")
 
     args = parser.parse_args()
+    args.task = "t2v-1.3B" if "1.3B" in MODEL_PATH else "t2v-14B"
+    args.size =  "832*480" if "1.3B" in MODEL_PATH else "1280*720"
     args.prompt = PROMPT
     args.ckpt_dir = MODEL_PATH
     args.output_dir = OUTPUT_DIR
@@ -622,15 +627,20 @@ def generate(args):
         raise ValueError(f"Unkown task type: {args.task}")
 
     if rank == 0:
-        if args.save_file is None:
-            formatted_time = datetime.now().strftime("%Y%m%d_%H%M%S")
-            formatted_prompt = args.prompt.replace(" ", "_").replace("/",
-                                                                     "_")[:50]
-            suffix = '.png' if "t2i" in args.task else '.mp4'
-            save_file = f"{args.task}_{args.size.replace('*','x') if sys.platform=='win32' else args.size}_{args.ulysses_size}_{args.ring_size}_{formatted_prompt}_{formatted_time}" + suffix
-            save_dir = OUTPUT_DIR
-            os.makedirs(save_dir, exist_ok=True)
-            args.save_file = os.path.join(save_dir, save_file)
+        # if args.save_file is None:
+        #     formatted_time = datetime.now().strftime("%Y%m%d_%H%M%S")
+        #     formatted_prompt = args.prompt.replace(" ", "_").replace("/",
+        #                                                              "_")[:50]
+        #     suffix = '.png' if "t2i" in args.task else '.mp4'
+        #     save_file = f"{args.task}_{args.size.replace('*','x') if sys.platform=='win32' else args.size}_{args.ulysses_size}_{args.ring_size}_{formatted_prompt}_{formatted_time}" + suffix
+        #     save_dir = OUTPUT_DIR
+        #     os.makedirs(save_dir, exist_ok=True)
+        #     args.save_file = os.path.join(save_dir, save_file)
+        
+        suffix = '.png' if "t2i" in args.task else '.mp4'
+        filename = f"{args.task}_{TAG}_{get_prompt_id(PROMPT)}" + suffix
+        os.makedirs(args.output_dir, exist_ok=True)
+        args.save_file = os.path.join(args.output_dir, filename)
 
         if "t2i" in args.task:
             logging.info(f"Saving generated image to {args.save_file}")
@@ -650,10 +660,13 @@ def generate(args):
                 normalize=True,
                 value_range=(-1, 1))
             
-    print_time_statistics()
     logging.info("Finished.")
 
 
 if __name__ == "__main__":
     args = _parse_args()
     generate(args)
+    print_time_statistics()
+    save_time_statistics_to_file(f"{OUTPUT_DIR}/{TAG}_time_stats.txt")
+    if ENABLE_JANO:
+        evaluate_quality_with_origin(args.save_file, TAG)

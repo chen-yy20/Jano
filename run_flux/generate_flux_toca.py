@@ -13,7 +13,7 @@ MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Flux-1"
 PROMPT = "A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background."
 ENABLE_TOCA = 1
 TAG = f"toca" if ENABLE_TOCA else "ori"
-OUTPUT_DIR = f"./results/tokencache_flux_result/{get_prompt_id(PROMPT)}"
+OUTPUT_DIR = f"./flux_results/tokencache_flux_result/{get_prompt_id(PROMPT)}"
 
 init_timer()
 warmup = 3

@@ -49,7 +49,7 @@ SELF_RANGE = 2
 CROSS_RANGE = 5
 ENABLE_PAB = 1
 TAG = f"s{SELF_RANGE}c{CROSS_RANGE}" if ENABLE_PAB else "ori"
-OUTPUT_DIR = f"./results/pab_flux_result/{get_prompt_id(PROMPT)}"
+OUTPUT_DIR = f"./flux_results/pab_flux_result/{get_prompt_id(PROMPT)}"
 
 init_timer()
 warmup = 3
@@ -117,6 +117,7 @@ def parse_args():
     args.pab_self_range = SELF_RANGE
     args.pab_cross_range = CROSS_RANGE
     args.output_dir = OUTPUT_DIR
+    args.seed = 42
     
     return args
 

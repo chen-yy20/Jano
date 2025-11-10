@@ -25,6 +25,7 @@ from wan.pab_text2video import WanT2V_pab
 from jano.stuff import get_prompt_id
 
 from utils.timer import init_timer, get_timer, print_time_statistics, save_time_statistics_to_file
+from utils.quality_metric import evaluate_quality_with_origin
 from utils.envs import GlobalEnv
 
 from datetime import datetime
@@ -33,12 +34,12 @@ time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
 init_timer()
 PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
 MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Wan2.1-T2V-1.3B" # 1.3B / 14B
-ENABLE_PAB = 1
+ENABLE_PAB = 0
 SELF_RANGE = 2
 CROSS_RANGE = 5
 
 TAG = f"s{SELF_RANGE}c{CROSS_RANGE}" if ENABLE_PAB else "ori"
-OUTPUT_DIR = f"./results/pab_wan_result/{get_prompt_id(PROMPT)}"
+OUTPUT_DIR = f"./wan_results/pab_wan_result/{get_prompt_id(PROMPT)}"
 
 
 EXAMPLE_PROMPT = {
@@ -660,3 +661,5 @@ if __name__ == "__main__":
     generate(args)
     print_time_statistics()
     save_time_statistics_to_file(f"{OUTPUT_DIR}/{TAG}_time_stats.txt")
+    if ENABLE_PAB:
+        evaluate_quality_with_origin(args.save_file, TAG)

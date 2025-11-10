@@ -118,7 +118,6 @@ class WanT2V_pab:
 
         self.sample_neg_prompt = config.sample_neg_prompt
 
-    @get_timer("generate_e2e")
     def generate(self,
                  input_prompt,
                  size=(1280, 720),
@@ -239,35 +238,35 @@ class WanT2V_pab:
             arg_null = {'context': context_null, 'seq_len': seq_len}
             
             Pab_Manager = init_pab_manger(len(timesteps))
+            with get_timer("generate_e2e"):
+                for step, t in enumerate(tqdm(timesteps)):
+                    latent_model_input = latents
+                    timestep = [t]
 
-            for step, t in enumerate(tqdm(timesteps)):
-                latent_model_input = latents
-                timestep = [t]
+                    timestep = torch.stack(timestep)
 
-                timestep = torch.stack(timestep)
+                    self.model.to(self.device)
+                    
+                    Pab_Manager.check_calc(step)
+                    with get_timer("dit"):
+                        GlobalEnv.set_envs("cfg", 0)
+                        noise_pred_cond = self.model(
+                            latent_model_input, t=timestep, **arg_c)[0]
+                        GlobalEnv.set_envs("cfg", 1)
+                        noise_pred_uncond = self.model(
+                            latent_model_input, t=timestep, **arg_null)[0]
 
-                self.model.to(self.device)
-                
-                Pab_Manager.check_calc(step)
-                with get_timer("dit"):
-                    GlobalEnv.set_envs("cfg", 0)
-                    noise_pred_cond = self.model(
-                        latent_model_input, t=timestep, **arg_c)[0]
-                    GlobalEnv.set_envs("cfg", 1)
-                    noise_pred_uncond = self.model(
-                        latent_model_input, t=timestep, **arg_null)[0]
+                    noise_pred = noise_pred_uncond + guide_scale * (
+                        noise_pred_cond - noise_pred_uncond)
 
-                noise_pred = noise_pred_uncond + guide_scale * (
-                    noise_pred_cond - noise_pred_uncond)
-
-                temp_x0 = sample_scheduler.step(
-                    noise_pred.unsqueeze(0),
-                    t,
-                    latents[0].unsqueeze(0),
-                    return_dict=False,
-                    generator=seed_g)[0]
-                
-                latents = [temp_x0.squeeze(0)]
+                    temp_x0 = sample_scheduler.step(
+                        noise_pred.unsqueeze(0),
+                        t,
+                        latents[0].unsqueeze(0),
+                        return_dict=False,
+                        generator=seed_g)[0]
+                    
+                    latents = [temp_x0.squeeze(0)]
 
             x0 = latents
             if offload_model:

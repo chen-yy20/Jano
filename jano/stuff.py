@@ -421,7 +421,7 @@ def visualize_mask(mask: torch.Tensor):
     plt.tight_layout()
     tag = GlobalEnv.get_envs("tag")
     p_steps = GlobalEnv.get_envs("warmup_steps")
-    save_path = os.path.join(GlobalEnv.get_envs("save_dir"), f"Mask_{tag}_{p_steps}.png")
+    save_path = os.path.join(GlobalEnv.get_envs("save_dir"), f"{tag}_{p_steps}_Mask.png")
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close()
     

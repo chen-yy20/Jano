@@ -31,7 +31,7 @@ THRESH = 0.4
 
 ENABLE_TEACACHE = 1
 TAG = f"TEA{THRESH}" if ENABLE_TEACACHE else "ori"
-OUTPUT_DIR = f"./results/teacache_flux_result/{get_prompt_id(PROMPT)}"
+OUTPUT_DIR = f"./flux_results/teacache_flux_result/{get_prompt_id(PROMPT)}"
 
 
 init_timer()
