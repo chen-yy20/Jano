@@ -1,11 +1,11 @@
 {
-  "generated_path": "./results/jano_flux_result/photorealistic_cute_cat,_wearing/B(1*8*8)_DS(0.8-2)_S0.2_M0.4_photorealistic_cute_cat,_wearing.png",
-  "reference_path": "./results/jano_flux_result/photorealistic_cute_cat,_wearing/ori_photorealistic_cute_cat,_wearing.png",
+  "generated_path": "./flux_results/jano_flux_result/photorealistic_cute_cat,_wearing/B(1*8*8)_DS(0.8-2)_S0.2_M0.4_photorealistic_cute_cat,_wearing.png",
+  "reference_path": "./flux_results/jano_flux_result/photorealistic_cute_cat,_wearing/ori_photorealistic_cute_cat,_wearing.png",
   "file_type": "image",
   "metrics": {
-    "psnr": 29.621310289221455,
-    "ssim": 0.9476844676061557,
-    "lpips": 0.08066942542791367
+    "psnr": 31.684290374861746,
+    "ssim": 0.9622782715510301,
+    "lpips": 0.05966975539922714
   },
-  "timestamp": "2025-11-10 17:36:06.791106"
+  "timestamp": "2025-11-10 19:38:24.056731"
 }

@@ -1,0 +1,11 @@
+{
+  "generated_path": "./flux_results/jano_flux_result/photorealistic_cute_cat,_wearing/B(1*4*4)_DS(0.8-2)_S0.2_M0.4_photorealistic_cute_cat,_wearing.png",
+  "reference_path": "./flux_results/jano_flux_result/photorealistic_cute_cat,_wearing/ori_photorealistic_cute_cat,_wearing.png",
+  "file_type": "image",
+  "metrics": {
+    "psnr": 27.907768914513515,
+    "ssim": 0.9128877707152124,
+    "lpips": 0.16845710575580597
+  },
+  "timestamp": "2025-11-10 19:34:55.885926"
+}

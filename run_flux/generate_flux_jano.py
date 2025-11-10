@@ -22,12 +22,13 @@ pipe = pipe.to('cuda')
 print(f"Model loaded, GPU memory allocated: {torch.cuda.memory_allocated()/1024**2:.2f}MB", flush=True)
 
 ENABLE_JANO = 1
-ANALYZE_BLOCK_SIZE = (1, HEIGHT//128, WIDTH//128)
+ANALYZE_BLOCK_SIZE = (1, HEIGHT//128,  WIDTH//128)
 DIFFUSION_STENGTH = 0.8
 DIFFUSION_DISTANCE = 2
 STATIC_THRESH = 0.2
 MEDIUM_THRESH = 0.4
-TAG = f"B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]})_DS({DIFFUSION_STENGTH}-{DIFFUSION_DISTANCE})_S{STATIC_THRESH}_M{MEDIUM_THRESH}" if ENABLE_JANO else "ori"
+WARMUP = 10
+TAG = f"W_{WARMUP}_B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]})_DS({DIFFUSION_STENGTH}-{DIFFUSION_DISTANCE})_S{STATIC_THRESH}_M{MEDIUM_THRESH}" if ENABLE_JANO else "ori"
 OUTPUT_DIR = f"./flux_results/jano_flux_result/{get_prompt_id(PROMPT)}"
 
 save_dir = OUTPUT_DIR
@@ -40,8 +41,8 @@ init_jano(
         tag = TAG,
         save_dir=OUTPUT_DIR,
         num_inference_steps=50,
-        warmup_steps=7,
-        cooldown_steps=3,
+        warmup_steps=WARMUP,
+        cooldown_steps=2,
         t_weight=0,
         d_strength=DIFFUSION_STENGTH,
         d_distance=DIFFUSION_DISTANCE,

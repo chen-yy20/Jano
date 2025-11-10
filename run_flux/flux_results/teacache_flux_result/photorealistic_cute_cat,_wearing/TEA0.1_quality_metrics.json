@@ -1,0 +1,11 @@
+{
+  "generated_path": "./flux_results/teacache_flux_result/photorealistic_cute_cat,_wearing/TEA0.1_photorealistic_cute_cat,_wearing.png",
+  "reference_path": "./flux_results/teacache_flux_result/photorealistic_cute_cat,_wearing/ori_photorealistic_cute_cat,_wearing.png",
+  "file_type": "image",
+  "metrics": {
+    "psnr": Infinity,
+    "ssim": 1.0,
+    "lpips": 0.0
+  },
+  "timestamp": "2025-11-10 21:12:53.212282"
+}

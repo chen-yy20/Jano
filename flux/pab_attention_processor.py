@@ -15,6 +15,8 @@ import logging
 
 from .pab_manager import enable_pab, if_broadcast_self, if_broadcast_cross
 
+from utils.timer import get_timer
+
 # Global PAB statistics
 _pab_stats_processor = {
     'self_compute': 0,
@@ -125,17 +127,17 @@ class PABFluxAttnProcessor2_0:
         
         # Debug: Always log processor calls for single stream blocks (layer 0 only to avoid spam)
         # This helps debug why self-attention statistics are 0
-        if enable_pab() and self.layer_idx == 0 and self.block_type == 'single':
-            if timestep is None:
-                logging.warning(
-                    f"[PAB] Single stream processor layer {self.layer_idx}: "
-                    f"called but timestep is None. encoder_hidden_states={encoder_hidden_states is not None}, kwargs.keys()={list(kwargs.keys())}"
-                )
-            else:
-                logging.info(
-                    f"[PAB] Single stream processor layer {self.layer_idx}: "
-                    f"called with timestep={timestep}"
-                )
+        # if enable_pab() and self.layer_idx == 0 and self.block_type == 'single':
+        #     if timestep is None:
+        #         logging.warning(
+        #             f"[PAB] Single stream processor layer {self.layer_idx}: "
+        #             f"called but timestep is None. encoder_hidden_states={encoder_hidden_states is not None}, kwargs.keys()={list(kwargs.keys())}"
+        #         )
+        #     else:
+        #         logging.info(
+        #             f"[PAB] Single stream processor layer {self.layer_idx}: "
+        #             f"called with timestep={timestep}"
+        #         )
         
         # If PAB is disabled or no timestep, use original processor or compute normally
         # BUT: Still update statistics even if timestep is missing (to debug why it's missing)
@@ -209,7 +211,7 @@ class PABFluxAttnProcessor2_0:
             else:
                 _pab_stats_processor['self_cached'] += 1
             
-            if self.layer_idx == 0:
+            if self.layer_idx == 0 and self.block_type == "single":
                 logging.info(
                     f"[PAB] Processor layer {self.layer_idx} ({self.block_type}): "
                     f"CACHE ATTENTION (t={timestep_key}, count={current_count}, reusing from t={self.last_compute_timestep})"
@@ -233,13 +235,14 @@ class PABFluxAttnProcessor2_0:
         else:
             _pab_stats_processor['self_compute'] += 1
         
-        if self.layer_idx == 0:
+        if self.layer_idx == 0 and self.block_type == "single":
             logging.info(
                 f"[PAB] Processor layer {self.layer_idx} ({self.block_type}): COMPUTE ATTENTION (t={timestep_key}, count={current_count})"
             )
         
         return attn_output
     
+    @get_timer("attn_compute")
     def _compute_attention(
         self,
         attn,

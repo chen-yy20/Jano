@@ -117,6 +117,7 @@ def parse_args():
     args.pab_self_range = SELF_RANGE
     args.pab_cross_range = CROSS_RANGE
     args.output_dir = OUTPUT_DIR
+    args.pab_self_threshold_max = 800 # 貌似这个对性能的影响最大,800是前22步都在算。
     args.seed = 42
     
     return args

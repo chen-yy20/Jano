@@ -27,7 +27,7 @@ MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Flux-1"
 PROMPT = "A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background."
 # Teacache 关键参数 
 # # 0.25 for 1.5x speedup, 0.4 for 1.8x speedup, 0.6 for 2.0x speedup, 0.8 for 2.25x speedup
-THRESH = 0.4
+THRESH = 0.1
 
 ENABLE_TEACACHE = 1
 TAG = f"TEA{THRESH}" if ENABLE_TEACACHE else "ori"
