@@ -23,6 +23,14 @@ huggingface-cli download Wan-AI/Wan2.1-T2V-14B --local-dir ./Wan2.1-T2V-14B
 ```
 
 ## 初始化
+
+### 配置环境
+```
+conda create -n jano python=3.10
+conda activate jano
+pip install -r requirements.txt
+```
+
 如果运行报错ModuleNotFoundError，请更新python path:
 ```
 export PYTHONPATH=$PYTHONPATH:$(pwd)
