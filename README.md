@@ -31,11 +31,10 @@ conda activate jano
 pip install -r requirements.txt
 ```
 
-如果运行报错ModuleNotFoundError，请更新python path:
+## 运行
+运行代码都在`run_flux\` 和 `run_wan\`中。相关参数在对应启动代码中修改。
+> 如果运行报错ModuleNotFoundError，请更新python path:
+
 ```
 export PYTHONPATH=$PYTHONPATH:$(pwd)
 ```
-
-## 运行
-运行代码都在`run_flux\` 和 `run_wan\`中。相关参数在对应启动代码中修改。
-
