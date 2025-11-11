@@ -23,6 +23,6 @@ torchvision==0.20.0
 tqdm==4.67.1
 transformers==4.49.0
 xfuser==0.4.3.post3
-~iffusers==0.31.0
-~ransformers==4.46.3
-~ransformers==4.57.0
+# ~iffusers==0.31.0
+# ~ransformers==4.46.3
+# ~ransformers==4.57.0

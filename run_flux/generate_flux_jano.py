@@ -15,7 +15,7 @@ WIDTH = 1024
 MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Flux-1"
 PROMPT = "A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background."
 
-ENABLE_JANO = 1
+ENABLE_JANO = 0
 ANALYZE_BLOCK_SIZE = (1, HEIGHT//128,  WIDTH//128)
 DIFFUSION_STENGTH = 0.8
 DIFFUSION_DISTANCE = 2
@@ -26,7 +26,7 @@ TAG = f"W_{WARMUP}_B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BL
 OUTPUT_DIR = f"./flux_results/jano_flux_result/{get_prompt_id(PROMPT)}"
 
 # Jano+X
-JANO_X = "pab" # 设置为pab去启用jano_pab
+JANO_X = "teacache" # 设置为pab去启用jano_pab
 GlobalEnv.set_envs("janox", JANO_X) 
 if JANO_X == "pab":
     from flux.pab.pab_manager import init_pab_manger
@@ -34,6 +34,11 @@ if JANO_X == "pab":
     init_pab_manger(50, self_range=SELF_RANGE, warmup=WARMUP)
     TAG = f"pab{SELF_RANGE}_{TAG}"
     
+if JANO_X == "teacache":
+    from flux.teacache.tea_transformer import jano_teacache_forward
+    FluxTransformer2DModel.forward = jano_teacache_forward
+    THRESH = 0.3
+    TAG = f"tea{THRESH}_{TAG}"
 
 save_dir = OUTPUT_DIR
 num_inference_steps = 50
@@ -68,6 +73,18 @@ prompt = PROMPT
 pipe = FluxPipeline.from_pretrained(MODEL_PATH, torch_dtype=torch.bfloat16)
 pipe.transformer = FluxTransformer2DModel.from_pretrained(f"{MODEL_PATH}/transformer", torch_dtype=torch.bfloat16)
 # pipe.enable_model_cpu_offload() #save some VRAM by offloading the model to CPU. Remove this if you have enough GPU power
+if JANO_X == "teacache":
+     # TeaCache
+    pipe.transformer.__class__.enable_teacache = True
+    pipe.transformer.__class__.cnt = 0
+    pipe.transformer.__class__.num_steps = num_inference_steps
+    pipe.transformer.__class__.rel_l1_thresh = THRESH # 0.25 for 1.5x speedup, 0.4 for 1.8x speedup, 0.6 for 2.0x speedup, 0.8 for 2.25x speedup
+    pipe.transformer.__class__.accumulated_rel_l1_distance = 0
+    pipe.transformer.__class__.previous_modulated_input = None
+    pipe.transformer.__class__.previous_residual = None
+
+
+
 pipe = pipe.to('cuda')
 print(f"Model loaded, GPU memory allocated: {torch.cuda.memory_allocated()/1024**2:.2f}MB", flush=True)
 
@@ -106,5 +123,5 @@ print(f"Stored {output_path}!", flush=True)
 print_time_statistics()
 save_time_statistics_to_file(f"{OUTPUT_DIR}/{TAG}_time_stats.txt")
 
-if ENABLE_JANO:
+if TAG != "ori":
     evaluate_quality_with_origin(output_path, TAG)
