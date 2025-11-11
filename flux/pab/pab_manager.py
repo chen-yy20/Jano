@@ -1,4 +1,3 @@
-import torch
 from utils.envs import GlobalEnv
 
 class PabManager:
@@ -7,27 +6,21 @@ class PabManager:
         self.warmup = warmup
         self.cooldown = 5
         self.num_inference_steps = num_inference_steps
-        self.self_range = self_range
-        self.cross_range = 5 # no use
-        
+        self.self_range = self_range        
         self.self_calc = True
-        self.cross_calc = True
-        
-        self.self_attn_cache = {}
-        self.cross_attn_cache = {}
-        
+        self.self_store = False
+        self.self_attn_cache = {}     
+            
     def check_calc(self, step):
         if step < self.warmup or step > self.num_inference_steps - self.cooldown:
             self.self_calc = True
+            self.self_store = False
         else:
-            self.self_calc =  ((step - self.warmup) % self.self_range == 0)
+            self.self_calc =  ((step - self.warmup) % self.self_range == 0) # 确保第一次是calc
+            self.self_store = True and self.self_calc
+            
+        print(f"step {step+1} | PAB-Attn: Calc:{self.self_calc}, Store:{self.self_store}", flush=True)
     
-        if step < self.warmup or step > self.num_inference_steps - self.cooldown:
-            self.cross_calc = True
-        else:
-            self.cross_calc =  ((step - self.warmup) % self.cross_range == 0)
-        print(f"step {step} | PAB: self: {self.self_calc}, cross {self.cross_calc}", flush=True)
-        
 
 def init_pab_manger(num_steps, self_range, warmup) -> PabManager:
     pab_manager = PabManager(num_steps, self_range, warmup)

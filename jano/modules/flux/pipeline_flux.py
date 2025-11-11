@@ -45,6 +45,8 @@ from utils.timer import get_timer
 from ...mask_manager.flux_mask_manager import init_mask_manager
 XLA_AVAILABLE = False
 
+from flux.pab.pab_manager import get_pab_manager
+
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -719,8 +721,10 @@ class FluxPipeline(
             guidance = None
             
         # # analyzer 和 mask manager 初始化
+        use_jano = False
         if GlobalEnv.get_envs("enable_stdit"):
-            print(f"{height=} {width=} {num_channels_latents}")
+            use_jano = True
+            print(f"Using Jano: {height=} {width=} {num_channels_latents}")
             analyzer = DynamicAnalyzer(
                 C = num_channels_latents,
                 T = 1,
@@ -733,6 +737,11 @@ class FluxPipeline(
                 num_inference_steps=num_inference_steps,
                 layer_num=19+38, # normal layers + single layers
             )
+        
+        use_jano_pab = False
+        if GlobalEnv.get_envs("janox") == "pab":
+            pab_manager = get_pab_manager()
+            use_jano_pab = True
 
         # 6. Denoising loop
         with get_timer("generate_e2e"):
@@ -742,9 +751,11 @@ class FluxPipeline(
                         continue
                     
                     update_timestep(i)
-                    if GlobalEnv.get_envs("enable_stdit"):
+                    if use_jano:
                         mask_manager.update_step_level()
-
+                    if use_jano_pab:
+                        pab_manager.check_calc(i)
+                    
                     # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                     timestep = t.expand(latents.shape[0]).to(latents.dtype)
 
@@ -760,7 +771,7 @@ class FluxPipeline(
                         return_dict=False,
                     )[0] # 1, 4096, 64
                     
-                    if GlobalEnv.get_envs("enable_stdit"):
+                    if use_jano:
                         # unpack: 1, 4096, 16 -> 1, 16, 128, 128
                         unpacked_noise_pred = self._unpack_latents(noise_pred, height, width, self.vae_scale_factor)
                         # print(f"{unpacked_noise_pred.shape=}, {noise_pred.shape=}")

@@ -23,6 +23,10 @@ from diffusers.models.attention_processor import Attention
 
 from jano.mask_manager.flux_mask_manager import get_mask_manager
 from jano.stuff import get_timestep, get_masked_timer
+# from utils.envs import GlobalEnv
+# from flux.pab.pab_manager import get_pab_manager
+
+
 
 
 class FluxAttnProcessor_jano:
@@ -30,6 +34,7 @@ class FluxAttnProcessor_jano:
 
     def __init__(self, layer_idx):
         self.layer_idx = layer_idx
+            
         if not hasattr(F, "scaled_dot_product_attention"):
             raise ImportError("FluxAttnProcessor2_0 requires PyTorch 2.0, to use it, please upgrade PyTorch to 2.0.")
     
@@ -42,6 +47,7 @@ class FluxAttnProcessor_jano:
         attention_mask: Optional[torch.FloatTensor] = None,
         image_rotary_emb: Optional[torch.Tensor] = None,
     ) -> torch.FloatTensor:
+        
         batch_size, _, _ = hidden_states.shape if encoder_hidden_states is None else encoder_hidden_states.shape
 
         # `sample` projections.

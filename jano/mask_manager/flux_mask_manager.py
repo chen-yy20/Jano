@@ -155,6 +155,7 @@ class MaskManager:
             
         mask2 = self.sequence_mask[~self.static_bool_mask]
         self.medium_bool_mask_in_l2 = (mask2 == 2).bool()
+        self.active_bool_mask_in_l2= (mask2 == 3).bool()
 
     def get_seq_len(self)->int:
         if self.step_level == 0 or self.step_level == 3:
