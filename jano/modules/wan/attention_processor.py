@@ -10,6 +10,8 @@ from utils.timer import get_timer
 from jano.mask_manager.wan_mask_manager import get_mask_manager
 from jano.stuff import get_timestep, get_masked_timer, print_gpu_memory
 
+from wan.jano_baselines.pab_manager import get_pab_manager
+
 
 class RoPEManager:
     _instance = None
@@ -112,6 +114,11 @@ class WanSelfAttention_masked_KV(nn.Module):
         self.qk_norm = qk_norm
         self.eps = eps
         self.layer_idx = layer_idx
+        
+        self.jano_pab = False
+        if GlobalEnv.get_envs("janox") == "pab":
+            self.jano_pab = True
+            self.pab_manager = get_pab_manager()
 
         # layers
         self.q = nn.Linear(dim, dim)
@@ -129,6 +136,15 @@ class WanSelfAttention_masked_KV(nn.Module):
             grid_sizes(Tensor): Shape [B, 3], the second dimension contains (F, H, W)
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
         """
+        if self.jano_pab:
+            cfg = GlobalEnv.get_envs("cond")
+            name = f"{cfg}-{self.layer_idx}"
+            mm = get_mask_manager()
+            if not self.pab_manager.self_calc and mm.step_level == 1: # 可以跳过计算
+                if self.layer_idx == 0:
+                    print(f"{get_timestep()} | Self attn: SKIP.", flush=True)
+                return self.pab_manager.self_attn_cache[name]
+
         b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
 
         # query, key, value function
@@ -160,4 +176,18 @@ class WanSelfAttention_masked_KV(nn.Module):
         # output
         x = x.flatten(2)
         x = self.o(x)
+        
+        if self.jano_pab and self.pab_manager.should_store:
+            if mm.step_level == 3:
+                store_output = x[:, mm.active_bool_mask, ...]
+            elif mm.step_level == 2:
+                store_output = x[:, mm.active_bool_mask_in_l2, ...]
+            else:
+                store_output = x
+                
+            self.pab_manager.self_attn_cache[name] = store_output
+            
+            if self.layer_idx == 0:
+                print(f"{get_timestep()} | Stored {store_output.shape=}.", flush=True)
+        
         return x

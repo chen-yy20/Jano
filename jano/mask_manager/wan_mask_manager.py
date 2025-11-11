@@ -97,6 +97,7 @@ class MaskManager:
         self.active_bool_mask = None
         self.medium_bool_mask = None
         self.medium_bool_mask_in_l2 = None
+        self.active_bool_mask_in_l2 = None
         self.static_bool_mask = None
         
         self.medium_cache = {}
@@ -195,6 +196,7 @@ class MaskManager:
         self.active_bool_mask = (self.sequence_mask == 3).bool()
         mask2 = self.sequence_mask[self.sequence_mask != 1]
         self.medium_bool_mask_in_l2 = (mask2 == 2).bool()
+        self.active_bool_mask_in_l2 = (mask2 == 3).bool()
         
         return self.latent_mask
     

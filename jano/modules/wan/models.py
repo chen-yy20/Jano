@@ -15,6 +15,8 @@ from jano.mask_manager.wan_mask_manager import get_mask_manager
 from jano.modules.wan.attention_processor import WanSelfAttention_masked_KV
 from jano.stuff import get_timestep, get_masked_timer, print_gpu_memory
 
+from wan.jano_baselines.pab_manager import get_pab_manager
+
 __all__ = ['WanModel']
 
 T5_CONTEXT_TOKEN_NUMBER = 512
@@ -126,6 +128,11 @@ class WanSelfAttention(nn.Module):
         self.qk_norm = qk_norm
         self.eps = eps
         self.layer_idx = layer_idx
+        
+        self.jano_pab = False
+        if GlobalEnv.get_envs("janox") == "pab":
+            self.jano_pab = True
+            self.pab_manager = get_pab_manager()
 
         # layers
         self.q = nn.Linear(dim, dim)
@@ -143,40 +150,7 @@ class WanSelfAttention(nn.Module):
             grid_sizes(Tensor): Shape [B, 3], the second dimension contains (F, H, W)
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
         """
-        with get_masked_timer("Self_Attn"):
-            # qkv之前，先补全x
-            # cond = GlobalEnv.get_envs("cond")
-            # manager = get_mask_manager()
-            # if manager is not None: # Enabled stdit  
-            #     layer_name = f"hidden_c{cond}"
-            #     if self.layer_idx == manager.num_layers -1: # 最后一层
-            #         prefetch_layer = 0
-            #         prefetch_name = f"hidden_c{1-cond}"
-            #     else:
-            #         prefetch_layer = self.layer_idx + 1
-            #         prefetch_name = layer_name
-            #     with torch.cuda.stream(manager.compute_stream):
-                    
-            #         # ========================== 预取或者预存 ==========================
-            #         if not manager.is_warmup_or_cooldown_step():
-            #             if not manager.is_update_step():
-            #                 x = manager.restore_from_staging_buffer(x, layer_name, self.layer_idx)
-            #                 manager.prefetch_to_staging_buffer(prefetch_name, prefetch_layer)
-            #                 # print(f"{self.layer_idx=} | {prefetch_name=} {prefetch_layer=}", flush=True)
-                        
-            #             else:
-            #                 # 此时x完整
-            #                 B, S, D = x.shape
-            #                 expanded_mask = manager.sequence_mask[:S].unsqueeze(0).unsqueeze(-1).expand(B, -1, D)
-            #                 frozen_x = x[~expanded_mask].reshape(B, -1, D) # 提取frozen部分
-            #                 manager.store_frozen_state_async(frozen_x, layer_name, self.layer_idx)
-                        
-            #                 if manager.offload and self.layer_idx == manager.num_layers - 1 and cond == 1: # 第二步的最后一层
-            #                     manager.prefetch_to_staging_buffer(prefetch_name, prefetch_layer)
-            #                     print(f"Update! {self.layer_idx}-c{cond}: {prefetch_name=} {prefetch_layer=}", flush=True)
-                        
-            # ======================== 计算 ============================
-            
+        with get_masked_timer("Self_Attn"):                        
             b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
 
             # query, key, value function

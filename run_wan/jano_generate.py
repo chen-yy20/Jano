@@ -49,12 +49,29 @@ DIFFUSION_DISTANCE = 2
 ANALYZE_BLOCK_SIZE = (7,6,8)
 STATIC_THRESH = 0.2
 MEDIUM_THRESH = 0.4
-
+WARMUP = 7
 ENABLE_JANO = 1
 
-TAG = f"B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]})_DS({DIFFUSION_STENGTH}-{DIFFUSION_DISTANCE})_S{STATIC_THRESH}_M{MEDIUM_THRESH}" if ENABLE_JANO else "ori"
-OUTPUT_DIR = f"./wan_results/jano_wan_result/{get_prompt_id(PROMPT)}"
+TAG = f"W{WARMUP}_B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]})_DS({DIFFUSION_STENGTH}-{DIFFUSION_DISTANCE})_S{STATIC_THRESH}_M{MEDIUM_THRESH}" if ENABLE_JANO else "ori"
+model_id = "1.3B" if "1.3B" in MODEL_PATH else "14B"
+OUTPUT_DIR = f"./wan_results/jano_wan_result/{model_id}/{get_prompt_id(PROMPT)}"
 
+# Jano+X
+JANO_X = "teacache"  # pab # no # teacache
+GlobalEnv.set_envs("janox", JANO_X) 
+
+if JANO_X == "pab":
+    from wan.jano_baselines.pab_manager import init_pab_manger
+    SELF_RANGE = 5
+    CROSS_RANGE = 5 # cross attention 占比太小，懒得适配，这个参数没用。
+    init_pab_manger(50, self_range=SELF_RANGE, cross_range=CROSS_RANGE, warmup=WARMUP)
+    TAG = f"pab_s{SELF_RANGE}_{TAG}"
+    
+if JANO_X == "teacache":
+    from wan.jano_baselines.teacache_forward import wrap_model_with_teacache
+    TEA_THRESH = 0.07
+    TAG = f"tea{TEA_THRESH}_{TAG}"
+    
 EXAMPLE_PROMPT = {
     "t2v-1.3B": {
         "prompt":
@@ -323,7 +340,7 @@ def generate(args):
     #         local_rank=local_rank,
     #         backend="nccl"
     #     )
-    #     logger.info("Init cfg group.")
+    #     logger.info("Init cfg group.")s
     
     _init_logging(rank)
     
@@ -336,7 +353,7 @@ def generate(args):
         tag = TAG,
         save_dir=OUTPUT_DIR,
         num_inference_steps=args.sample_steps,
-        warmup_steps=5,
+        warmup_steps=WARMUP,
         cooldown_steps=4,
         t_weight=T_WEIGHT,
         d_strength=DIFFUSION_STENGTH,
@@ -437,6 +454,11 @@ def generate(args):
             use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
             t5_cpu=args.t5_cpu,
         )
+        
+        if GlobalEnv.get_envs("janox") == "teacache":
+            args.teacache_thresh = TEA_THRESH
+            args.use_ret_steps = False
+            wrap_model_with_teacache(wan_t2v, args)
 
         logging.info(
             f"Generating {'image' if 't2i' in args.task else 'video'} ...")
@@ -638,7 +660,7 @@ def generate(args):
         #     args.save_file = os.path.join(save_dir, save_file)
         
         suffix = '.png' if "t2i" in args.task else '.mp4'
-        filename = f"{args.task}_{TAG}_{get_prompt_id(PROMPT)}" + suffix
+        filename = f"{TAG}_{get_prompt_id(PROMPT)}_{args.task}" + suffix
         os.makedirs(args.output_dir, exist_ok=True)
         args.save_file = os.path.join(args.output_dir, filename)
 
@@ -668,5 +690,5 @@ if __name__ == "__main__":
     generate(args)
     print_time_statistics()
     save_time_statistics_to_file(f"{OUTPUT_DIR}/{TAG}_time_stats.txt")
-    if ENABLE_JANO:
+    if TAG != "ori":
         evaluate_quality_with_origin(args.save_file, TAG)

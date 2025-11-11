@@ -1,0 +1,11 @@
+{
+  "generated_path": "./wan_results/jano_wan_result/1.3B/two_anthropomorphic_cats_comfy/pab_s5_W7_B(7*6*8)_DS(0.8-2)_S0.2_M0.4_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4",
+  "reference_path": "./wan_results/jano_wan_result/1.3B/two_anthropomorphic_cats_comfy/ori_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4",
+  "file_type": "video",
+  "metrics": {
+    "psnr": 19.10005526890224,
+    "ssim": 0.8037189392763154,
+    "lpips": 0.14195651101109422
+  },
+  "timestamp": "2025-11-11 18:45:31.673524"
+}

@@ -21,6 +21,7 @@ from wan.utils.utils import cache_image, cache_video, str2bool
 # from tocache.apply_toca import apply_toca_to_wan
 
 from wan.pab_text2video import WanT2V_pab
+from wan.jano_baselines.pab_manager import init_pab_manger
 
 from jano.stuff import get_prompt_id
 
@@ -34,13 +35,15 @@ time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
 init_timer()
 PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
 MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Wan2.1-T2V-1.3B" # 1.3B / 14B
-ENABLE_PAB = 0
+ENABLE_PAB = 1
+WARMUP = 7
 SELF_RANGE = 2
 CROSS_RANGE = 5
 
 TAG = f"s{SELF_RANGE}c{CROSS_RANGE}" if ENABLE_PAB else "ori"
 OUTPUT_DIR = f"./wan_results/pab_wan_result/{get_prompt_id(PROMPT)}"
 
+init_pab_manger(50, SELF_RANGE, CROSS_RANGE, WARMUP)
 
 EXAMPLE_PROMPT = {
     "t2v-1.3B": {

@@ -33,6 +33,8 @@ from jano.stuff import update_timestep, get_timer, store_feature
 from jano.modules.wan.models import WanModel
 from utils.envs import GlobalEnv
 
+from wan.jano_baselines.pab_manager import get_pab_manager
+
 class WanT2V_jano:
 
     def __init__(
@@ -252,13 +254,20 @@ class WanT2V_jano:
             arg_null = {'context': context_null, 'seq_len': seq_len}
             
             enable_jano = GlobalEnv.get_envs('enable_stdit')
-            warmup_step = GlobalEnv.get_envs('warmup_steps')
+            warmup_steps = GlobalEnv.get_envs('warmup_steps')
+            
+            use_jano_pab = False
+            if GlobalEnv.get_envs("janox") == "pab":
+                pab_manager = get_pab_manager()
+                use_jano_pab = True
             
             with get_timer("generate_e2e"):
                 for step, t in enumerate(tqdm(timesteps)):
                     latent_model_input = latents    
                     timestep = [t]
                     update_timestep(step)
+                    if use_jano_pab:
+                        pab_manager.check_calc(step)
                     
                     timestep = torch.stack(timestep)
                     

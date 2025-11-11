@@ -237,7 +237,7 @@ class WanT2V_pab:
             arg_c = {'context': context, 'seq_len': seq_len}
             arg_null = {'context': context_null, 'seq_len': seq_len}
             
-            Pab_Manager = init_pab_manger(len(timesteps))
+            Pab_Manager = get_pab_manager()
             with get_timer("generate_e2e"):
                 for step, t in enumerate(tqdm(timesteps)):
                     latent_model_input = latents
