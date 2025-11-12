@@ -41,7 +41,7 @@ PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight 
 # 强加速
 # PROMPT = "A simple white pendulum swinging back and forth against a plain black background. The pendulum moves in a clear, rhythmic motion, creating a hypnotic pattern through time while maintaining minimal spatial complexity."
 
-MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Wan2.1-T2V-1.3B" # 1.3B / 14B
+MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Wan2.1-T2V-14B" # 1.3B / 14B
 
 T_WEIGHT = 0.6
 DIFFUSION_STENGTH = 0.8
@@ -57,7 +57,7 @@ model_id = "1.3B" if "1.3B" in MODEL_PATH else "14B"
 OUTPUT_DIR = f"./wan_results/jano_wan_result/{model_id}/{get_prompt_id(PROMPT)}"
 
 # Jano+X
-JANO_X = "teacache"  # pab # no # teacache
+JANO_X = "no"  # pab # no # teacache
 GlobalEnv.set_envs("janox", JANO_X) 
 
 if JANO_X == "pab":
@@ -299,6 +299,8 @@ def _parse_args():
     args = parser.parse_args()
     args.task = "t2v-1.3B" if "1.3B" in MODEL_PATH else "t2v-14B"
     args.size =  "832*480" if "1.3B" in MODEL_PATH else "1280*720"
+    if model_id == "14B":
+        args.t5_cpu = True
     args.prompt = PROMPT
     args.ckpt_dir = MODEL_PATH
     args.output_dir = OUTPUT_DIR

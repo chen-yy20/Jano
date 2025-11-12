@@ -15,7 +15,7 @@ WIDTH = 1024
 MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Flux-1"
 PROMPT = "A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background."
 
-ENABLE_JANO = 0
+ENABLE_JANO = 1
 ANALYZE_BLOCK_SIZE = (1, HEIGHT//128,  WIDTH//128)
 DIFFUSION_STENGTH = 0.8
 DIFFUSION_DISTANCE = 2
@@ -26,7 +26,7 @@ TAG = f"W_{WARMUP}_B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BL
 OUTPUT_DIR = f"./flux_results/jano_flux_result/{get_prompt_id(PROMPT)}"
 
 # Jano+X
-JANO_X = "teacache" # 设置为pab去启用jano_pab
+JANO_X = "no" # 设置为pab去启用jano_pab
 GlobalEnv.set_envs("janox", JANO_X) 
 if JANO_X == "pab":
     from flux.pab.pab_manager import init_pab_manger

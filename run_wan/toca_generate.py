@@ -36,7 +36,8 @@ MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Wan2.1-T2V-1.3B" # 1.3B / 14B
 ENABLE_TOCA = 1
 
 TAG = "toca" if ENABLE_TOCA else "ori"
-OUTPUT_DIR = f"./wan_results/tokencache_wan_result/{get_prompt_id(PROMPT)}"
+model_id = "1.3B" if "1.3B" in MODEL_PATH else "14B"
+OUTPUT_DIR = f"./wan_results/tokencache_wan_result/{model_id}/{get_prompt_id(PROMPT)}"
 
 EXAMPLE_PROMPT = {
     "t2v-1.3B": {

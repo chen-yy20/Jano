@@ -39,12 +39,13 @@ from wan.jano_baselines.teacache_forward import teacache_forward
 
 init_timer()
 PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
-MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Wan2.1-T2V-1.3B" # 1.3B / 14B
+MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Wan2.1-T2V-14B" # 1.3B / 14B
 ENABLE_TEACACHE = 1
 THRESH = 0.07 # Higher speedup will cause to worse quality -- 0.1 for 2.0x speedup -- 0.2 for 3.0x speedup
 
 TAG = f"thresh{THRESH}" if ENABLE_TEACACHE else "ori"
-OUTPUT_DIR = f"./wan_results/tea_wan_result/{get_prompt_id(PROMPT)}"
+model_id = "1.3B" if "1.3B" in MODEL_PATH else "14B"
+OUTPUT_DIR = f"./wan_results/tea_wan_result/{model_id}/{get_prompt_id(PROMPT)}"
 
 EXAMPLE_PROMPT = {
     "t2v-1.3B": {

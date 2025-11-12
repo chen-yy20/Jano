@@ -41,7 +41,8 @@ SELF_RANGE = 2
 CROSS_RANGE = 5
 
 TAG = f"s{SELF_RANGE}c{CROSS_RANGE}" if ENABLE_PAB else "ori"
-OUTPUT_DIR = f"./wan_results/pab_wan_result/{get_prompt_id(PROMPT)}"
+model_id = "1.3B" if "1.3B" in MODEL_PATH else "14B"
+OUTPUT_DIR = f"./wan_results/pab_wan_result/{model_id}/{get_prompt_id(PROMPT)}"
 
 init_pab_manger(50, SELF_RANGE, CROSS_RANGE, WARMUP)
 

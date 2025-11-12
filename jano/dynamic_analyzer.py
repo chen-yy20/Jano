@@ -265,14 +265,14 @@ def visualize_block_dynamics(temporal_dynamics, spatial_dynamics, original_combi
     cmap = 'viridis'
     
     # 1. 时间复杂度热力图
-    im1 = axes[0, 0].imshow(temporal_2d, cmap=cmap, aspect='auto', vmin=0, vmax=1)
+    im1 = axes[0, 0].imshow(temporal_2d, cmap=cmap, aspect='auto')
     axes[0, 0].set_title(f'Temporal Dynamics\n(Mean: {temporal_2d.mean():.4f})', fontsize=12)
     axes[0, 0].set_xlabel('Width Blocks')
     axes[0, 0].set_ylabel('Height Blocks')
     plt.colorbar(im1, ax=axes[0, 0], shrink=0.8)
     
     # 2. 空间复杂度热力图
-    im2 = axes[0, 1].imshow(spatial_2d, cmap=cmap, aspect='auto', vmin=0, vmax=1)
+    im2 = axes[0, 1].imshow(spatial_2d, cmap=cmap, aspect='auto')
     axes[0, 1].set_title(f'Spatial Dynamics\n(Mean: {spatial_2d.mean():.4f})', fontsize=12)
     axes[0, 1].set_xlabel('Width Blocks')
     axes[0, 1].set_ylabel('Height Blocks')
