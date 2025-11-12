@@ -1,0 +1,11 @@
+{
+  "generated_path": "./cvx_results/jano_cvx_result/two_anthropomorphic_cats_comfy/W10_B(11*8*17)_DS(0.8-2)_S0.2_M0.4_two_anthropomorphic_cats_comfy.mp4",
+  "reference_path": "./cvx_results/jano_cvx_result/two_anthropomorphic_cats_comfy/ori_two_anthropomorphic_cats_comfy.mp4",
+  "file_type": "video",
+  "metrics": {
+    "psnr": 18.764798892492767,
+    "ssim": 0.6745976143166028,
+    "lpips": 0.3486992558579386
+  },
+  "timestamp": "2025-11-13 01:07:48.075378"
+}
