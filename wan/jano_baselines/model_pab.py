@@ -146,7 +146,7 @@ class WanSelfAttention(nn.Module):
             cfg = GlobalEnv.get_envs("cfg")
             name = f"{cfg}-{self.layer_id}"
             pab_manager = get_pab_manager()
-            if not pab_manager.self_calc:
+            if not pab_manager.self_calc and pab_manager.is_target_layer(self.layer_id):
                 return pab_manager.self_attn_cache[name]
         
         b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
@@ -181,7 +181,8 @@ class WanSelfAttention(nn.Module):
         x = self.o(x)
         
         if GlobalEnv.get_envs("enable_pab"):
-            pab_manager.self_attn_cache[name] = x
+            if pab_manager.is_target_layer(self.layer_id):
+                pab_manager.self_attn_cache[name] = x
         
         return x
 
@@ -196,10 +197,11 @@ class WanT2VCrossAttention(WanSelfAttention):
             context_lens(Tensor): Shape [B]
         """
         if GlobalEnv.get_envs("enable_pab"):
+            pab_manager = get_pab_manager()
             cfg = GlobalEnv.get_envs("cfg")
             name = f"{cfg}-{self.layer_id}"
-            pab_manager = get_pab_manager()
-            if not pab_manager.cross_calc:
+            
+            if not pab_manager.cross_calc and pab_manager.is_target_layer(self.layer_id):
                 return pab_manager.cross_attn_cache[name]
         
         b, n, d = x.size(0), self.num_heads, self.head_dim
@@ -219,7 +221,8 @@ class WanT2VCrossAttention(WanSelfAttention):
         x = self.o(x)
         
         if GlobalEnv.get_envs("enable_pab"):
-            pab_manager.cross_attn_cache[name] = x
+            if pab_manager.is_target_layer(self.layer_id):
+                pab_manager.cross_attn_cache[name] = x
         
         return x
 

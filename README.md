@@ -43,6 +43,19 @@ export PYTHONPATH=$PYTHONPATH:$(pwd)
 
 取决与你的集群管理机制。
 
-基于slurm的集群可以直接使用`bash jano_wan_2gpu.sh`来启动两卡，有关参数可以在`infer.sh`中修改。
+基于slurm的集群可以直接使用`bash jano_wan_2gpu.sh`来启动两卡。
+目前支持`jano`和`pab`的两卡运行，修改`infer.sh`来选择跑哪个。
+
+```
+# SCRIPT="./run_wan/jano_generate.py"
+SCRIPT="./run_wan/pab_generate.py"
+```
 
 如果用torchrun之类的，请自行适配。
+
+
+## Wan-14B 内存优化
+* Jano: `MEMORY_EFFICIENT_CACHE=True` + 2卡并行
+* PAB: 设置 `LAYER_INTERVAL = 2`，设置为n，内存消耗就减少为n分之一 + 2卡并行
+
+其他未实现。

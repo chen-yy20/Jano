@@ -14,20 +14,22 @@ import torch.cuda.amp as amp
 import torch.distributed as dist
 from tqdm import tqdm
 
-from .distributed.fsdp import shard_model
+from ..distributed.fsdp import shard_model
 
-from .modules.t5 import T5EncoderModel
-from .modules.vae import WanVAE
-from .utils.fm_solvers import (
+from ..modules.t5 import T5EncoderModel
+from ..modules.vae import WanVAE
+from ..utils.fm_solvers import (
     FlowDPMSolverMultistepScheduler,
     get_sampling_sigmas,
     retrieve_timesteps,
 )
-from .utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
+from ..utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
 # from .train_free_utils import make_ar1_noise, temporal_align_step
 # from tocache.apply_toca import apply_toca_to_wan
 from utils.timer import get_timer
 from utils.envs import GlobalEnv
+
+from jano.dist.parallel_state import get_cp_group, get_cp_worldsize
 
 from wan.jano_baselines.pab_manager import init_pab_manger, get_pab_manager
 from wan.jano_baselines.model_pab import WanModel
@@ -97,7 +99,7 @@ class WanT2V_pab:
         if use_usp:
             from xfuser.core.distributed import get_sequence_parallel_world_size
 
-            from .distributed.xdit_context_parallel import (
+            from ..distributed.xdit_context_parallel import (
                 usp_attn_forward,
                 usp_dit_forward,
             )
@@ -249,15 +251,31 @@ class WanT2V_pab:
                     
                     Pab_Manager.check_calc(step)
                     with get_timer("dit"):
-                        GlobalEnv.set_envs("cfg", 0)
-                        noise_pred_cond = self.model(
-                            latent_model_input, t=timestep, **arg_c)[0]
-                        GlobalEnv.set_envs("cfg", 1)
-                        noise_pred_uncond = self.model(
-                            latent_model_input, t=timestep, **arg_null)[0]
+                        # 2卡并行代码，cfg parallelism.
+                        if get_cp_worldsize() == 2:
+                            if get_cp_group().rank_in_group == 0:
+                                GlobalEnv.set_envs("cfg", 0) # 标记轮次，每步两轮
+                                noise_pred_cp = self.model(
+                                    latent_model_input, t=timestep, **arg_c)[0]
+                                
+                            elif get_cp_group().rank_in_group == 1:
+                                GlobalEnv.set_envs("cfg", 1)
+                                noise_pred_cp = self.model(
+                                    latent_model_input, t=timestep, **arg_null)[0]
+                            
+                            noise_pred_gather = get_cp_group().all_gather(noise_pred_cp, dim=0, split=True)
+                            noise_pred_cond = noise_pred_gather[0]
+                            noise_pred_uncond = noise_pred_gather[1]
+                        else:
+                            GlobalEnv.set_envs("cfg", 0)
+                            noise_pred_cond = self.model(
+                                latent_model_input, t=timestep, **arg_c)[0]
+                            GlobalEnv.set_envs("cfg", 1)
+                            noise_pred_uncond = self.model(
+                                latent_model_input, t=timestep, **arg_null)[0]
 
-                    noise_pred = noise_pred_uncond + guide_scale * (
-                        noise_pred_cond - noise_pred_uncond)
+                        noise_pred = noise_pred_uncond + guide_scale * (
+                            noise_pred_cond - noise_pred_uncond)
 
                     temp_x0 = sample_scheduler.step(
                         noise_pred.unsqueeze(0),
