@@ -21,6 +21,9 @@ class RoPEManager:
         self.full_freqs_i = None # self.full_freqs_i.shape=torch.Size([32760, 1, 64])
         self.medium_freqs_i = None
         self.active_freqs_i = None
+        
+        self.full_medium_freqs_i = None
+        self.full_active_freqs_i = None
     
     @staticmethod
     def get_instance():
@@ -28,7 +31,7 @@ class RoPEManager:
             RoPEManager._instance = RoPEManager()
         return RoPEManager._instance
     
-    def get_freqs_i(self, grid_sizes, freqs):
+    def get_freqs_i(self, grid_sizes, freqs, cache_x: False):
         if self.full_freqs_i is None:
             f, h, w = grid_sizes[0].tolist()
             c = freqs.size(1)
@@ -47,11 +50,27 @@ class RoPEManager:
         level = mm.step_level
         if level == 3 or level == 0:
             return self.full_freqs_i
+        
         elif level == 2:
+            if cache_x:
+                if self.full_medium_freqs_i is None:
+                    m_freqs = self.full_freqs_i[mm.medium_mask]
+                    s_freqs = self.full_freqs_i[~mm.medium_mask]
+                    self.full_medium_freqs_i = torch.cat([m_freqs, s_freqs])
+                return self.full_medium_freqs_i
             if self.medium_freqs_i is None:
                 self.medium_freqs_i = self.full_freqs_i[mm.medium_mask]
             return self.medium_freqs_i
+        
         elif level == 1:
+            if cache_x:
+                if self.full_active_freqs_i is None:
+                    a_freqs = self.full_freqs_i[mm.active_mask]
+                    m_freqs = self.full_freqs_i[mm.medium_bool_mask]
+                    s_freqs = self.full_freqs_i[mm.static_bool_mask]
+                    self.full_active_freqs_i = torch.cat([a_freqs, m_freqs, s_freqs])
+                return self.full_active_freqs_i
+            
             if self.active_freqs_i is None:
                 self.active_freqs_i = self.full_freqs_i[mm.active_mask]
             return self.active_freqs_i
@@ -87,14 +106,14 @@ def origin_rope_apply(x, grid_sizes, freqs):
     return torch.stack(output).float()
 
 @amp.autocast(enabled=False)
-def adaptive_rope_apply(x, grid_sizes, freqs):
+def adaptive_rope_apply(x, grid_sizes, freqs, cache_x = False):
     n, c = x.size(2), x.size(3) // 2
     # seq_len = grid_sizes[0].prod().item()  # f * h * w
     seq_len = x.shape[1]
     
     # 获取缓存的freqs_i
     rope_manager = RoPEManager.get_instance()
-    freqs_i = rope_manager.get_freqs_i(grid_sizes, freqs)
+    freqs_i = rope_manager.get_freqs_i(grid_sizes, freqs, cache_x)
     
     assert freqs_i.shape[0] == x.shape[1] # 
     
@@ -194,11 +213,8 @@ class WanSelfAttention_jano(nn.Module):
             return q, k, v
 
         q, k, v = qkv_fn(x)
-        q = adaptive_rope_apply(q, grid_sizes, freqs)
-        if self.cache_x:
-            k = origin_rope_apply(k, grid_sizes, freqs)
-        else:
-            k = adaptive_rope_apply(k, grid_sizes, freqs)
+        q = adaptive_rope_apply(q, grid_sizes, freqs, cache_x=False)
+        k = adaptive_rope_apply(k, grid_sizes, freqs, cache_x=self.cache_x)
 
         if not self.cache_x and mm is not None:
             k, v = mm.process_kv_sequence(

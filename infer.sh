@@ -10,9 +10,9 @@ export WORLD_SIZE=$GPUS_PER_NODE
 
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 
-# SCRIPT="./run_wan/jano_generate.py"
-SCRIPT="./run_wan/pab_generate.py"
+SCRIPT="./run_wan/jano_generate.py"
+# SCRIPT="./run_wan/pab_generate.py"
 ARGS=""
 EXTRA_ARGS=""
 
-exec python $SCRIPT $ARGS $EXTRA_ARGS
+exec python $SCRIPT $ARGS $EXTRA_ARGSdui

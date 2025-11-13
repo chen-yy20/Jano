@@ -3,9 +3,9 @@
   "reference_path": "./wan_results/jano_wan_result/1.3B/two_anthropomorphic_cats_comfy/ori_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4",
   "file_type": "video",
   "metrics": {
-    "psnr": 19.053645953710436,
-    "ssim": 0.8033882631018674,
-    "lpips": 0.14147290182702335
+    "psnr": 11.98635911634814,
+    "ssim": 0.5792136876115243,
+    "lpips": 0.5809439405982877
   },
-  "timestamp": "2025-11-13 12:00:27.834187"
+  "timestamp": "2025-11-13 14:39:10.877183"
 }
