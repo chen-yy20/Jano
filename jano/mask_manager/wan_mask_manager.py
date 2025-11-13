@@ -112,7 +112,7 @@ class MaskManager:
         
         # 记录最大内存使用
         self.max_memory = 0
-        self.offload_kv = True
+        self.offload_kv = False
         
         # offload下的双流流水线实现【暂时停用】
         # if self.offload:
@@ -372,6 +372,63 @@ class MaskManager:
                 result = torch.cat([x, medium_kv, static_kv], dim=1)
             
         return result.reshape(B, -1, N, D)
+    
+    def process_x_sequence(self, x: torch.Tensor, name: str, layer_idx: int) -> torch.Tensor:
+        if self.step_level == 0:
+            return x
+        
+        state_key = f"{name}_{layer_idx}"
+        B, S, D = x.shape
+        
+        if self.step_level == 3:     
+            # with get_timer("3_x"):       
+            static_data = x[:, self.static_bool_mask, :]
+            medium_data = x[:, self.medium_bool_mask, :]
+            
+            if self.offload_kv:
+                self.static_cache[state_key] = static_data.cpu()
+                self.medium_cache[state_key] = medium_data.cpu()
+            else:
+                self.static_cache[state_key] = static_data
+                self.medium_cache[state_key] = medium_data
+            if get_timestep() == GlobalEnv.get_envs("warmup_steps") + 1:
+                print(f"Stored {state_key}, {x.shape=}, "
+                    f"tensor_MiB={x.element_size() * x.nelement() >> 20}, " # >>20，右移20位，Byte转换为MB
+                    f"cuda_reserved_MiB={torch.cuda.memory_reserved() >> 20}, "
+                    f"cuda_allocated_MiB={torch.cuda.memory_allocated() >> 20}", flush=True)
+            result = x
+        elif self.step_level == 2:
+            # with get_timer("2_x"):
+            # 存储
+            medium_data = x[:, self.medium_bool_mask_in_l2, :]
+            if self.offload_kv:
+                self.medium_cache[state_key] = medium_data.cpu()
+            else:
+                self.medium_cache[state_key] = medium_data
+                
+            # 恢复（从CPU转回GPU如果需要）
+            static_kv = self.static_cache[state_key]
+            if self.offload_kv:
+                static_kv = static_kv.cuda()
+                
+            if layer_idx == 20:
+                print(f"{get_timestep()} | Fetch from {state_key}, {static_kv.shape=}", flush=True)
+            result = torch.cat([x, static_kv], dim=1)
+        elif self.step_level == 1:
+            # with get_timer("1_x"):
+            # 恢复（从CPU转回GPU如果需要）
+            medium_kv = self.medium_cache[state_key]
+            static_kv = self.static_cache[state_key]
+            
+            if self.offload_kv:
+                medium_kv = medium_kv.cuda()
+                static_kv = static_kv.cuda()
+                
+            if layer_idx == 20:
+                print(f"{get_timestep()} | Fetch from {state_key}, {static_kv.shape=} {medium_kv.shape=}", flush=True)
+            result = torch.cat([x, medium_kv, static_kv], dim=1)
+            
+        return result.reshape(B, -1, D)
 
     def clear_frozen_states(self):
         """清理frozen状态并重置内存统计"""

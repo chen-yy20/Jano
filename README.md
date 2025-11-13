@@ -38,3 +38,11 @@ pip install -r requirements.txt
 ```
 export PYTHONPATH=$PYTHONPATH:$(pwd)
 ```
+
+## 分布式运行
+
+取决与你的集群管理机制。
+
+基于slurm的集群可以直接使用`bash jano_wan_2gpu.sh`来启动两卡，有关参数可以在`infer.sh`中修改。
+
+如果用torchrun之类的，请自行适配。

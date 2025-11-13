@@ -23,6 +23,7 @@ from wan.utils.utils import cache_image, cache_video, str2bool
 from jano.modules.wan.wan_t2v import WanT2V_jano
 # from stdit.distributed.parallel_state import init_distributed_environment, init_cp_group
 from jano import init_jano
+from jano.dist.parallel_state import init_distributed_environment, init_cp_group
 from jano.stuff import get_prompt_id
 
 from utils.envs import GlobalEnv
@@ -41,7 +42,7 @@ PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight 
 # 强加速
 # PROMPT = "A simple white pendulum swinging back and forth against a plain black background. The pendulum moves in a clear, rhythmic motion, creating a hypnotic pattern through time while maintaining minimal spatial complexity."
 
-MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Wan2.1-T2V-14B" # 1.3B / 14B
+MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Wan2.1-T2V-1.3B" # 1.3B / 14B
 
 T_WEIGHT = 0.6
 DIFFUSION_STENGTH = 0.8
@@ -51,6 +52,8 @@ STATIC_THRESH = 0.2
 MEDIUM_THRESH = 0.4
 WARMUP = 7
 ENABLE_JANO = 1
+MEMORY_EFFICIENT_CACHE = False # 如果炸内存了，设置这个参数为True，可以减少一半的kv cache内存使用。
+GlobalEnv.set_envs("memory_efficient_cache", MEMORY_EFFICIENT_CACHE)
 
 TAG = f"W{WARMUP}_B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]})_DS({DIFFUSION_STENGTH}-{DIFFUSION_DISTANCE})_S{STATIC_THRESH}_M{MEDIUM_THRESH}" if ENABLE_JANO else "ori"
 model_id = "1.3B" if "1.3B" in MODEL_PATH else "14B"
@@ -71,6 +74,29 @@ if JANO_X == "teacache":
     from wan.jano_baselines.teacache_forward import wrap_model_with_teacache
     TEA_THRESH = 0.07
     TAG = f"tea{TEA_THRESH}_{TAG}"
+    
+    
+# 2卡并行的设置，按照你的方法修改环境变量
+# 初始化并行环境
+rank = int(os.getenv("RANK", 0))
+world_size = int(os.getenv("WORLD_SIZE", 1))
+local_rank = int(os.getenv("LOCAL_RANK", 0))
+
+if world_size > 1:
+    assert world_size == 2, "only support cfg parallel"
+    torch.cuda.set_device(local_rank)
+    init_distributed_environment(
+        world_size = world_size,
+        rank = rank,
+        local_rank = local_rank,
+    )
+    init_cp_group(
+        group_ranks=[[0,1]],
+        local_rank=local_rank,
+        backend="nccl"
+    )
+    
+# ===================================================
     
 EXAMPLE_PROMPT = {
     "t2v-1.3B": {
@@ -684,6 +710,9 @@ def generate(args):
                 normalize=True,
                 value_range=(-1, 1))
             
+        if TAG != "ori":
+            evaluate_quality_with_origin(args.save_file, TAG)
+            
     logging.info("Finished.")
 
 
@@ -692,5 +721,4 @@ if __name__ == "__main__":
     generate(args)
     print_time_statistics()
     save_time_statistics_to_file(f"{OUTPUT_DIR}/{TAG}_time_stats.txt")
-    if TAG != "ori":
-        evaluate_quality_with_origin(args.save_file, TAG)
+    

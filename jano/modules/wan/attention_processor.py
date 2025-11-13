@@ -55,9 +55,39 @@ class RoPEManager:
             if self.active_freqs_i is None:
                 self.active_freqs_i = self.full_freqs_i[mm.active_mask]
             return self.active_freqs_i
-            
+        
 @amp.autocast(enabled=False)
-def rope_apply(x, grid_sizes, freqs):
+def origin_rope_apply(x, grid_sizes, freqs):
+    # grid sizes: grid_sizes=tensor([[21, 30, 52]])
+    n, c = x.size(2), x.size(3) // 2
+
+    # split freqs
+    freqs = freqs.split([c - 2 * (c // 3), c // 3, c // 3], dim=1)
+
+    # loop over samples
+    output = []
+    for i, (f, h, w) in enumerate(grid_sizes.tolist()):
+        seq_len = f * h * w
+        # precompute multipliers
+        x_i = torch.view_as_complex(x[i, :seq_len].to(torch.float64).reshape(
+            seq_len, n, -1, 2))
+        freqs_i = torch.cat([
+            freqs[0][:f].view(f, 1, 1, -1).expand(f, h, w, -1),
+            freqs[1][:h].view(1, h, 1, -1).expand(f, h, w, -1),
+            freqs[2][:w].view(1, 1, w, -1).expand(f, h, w, -1)
+        ],
+                            dim=-1).reshape(seq_len, 1, -1)
+
+        # apply rotary embedding
+        x_i = torch.view_as_real(x_i * freqs_i).flatten(2)
+        x_i = torch.cat([x_i, x[i, seq_len:]])
+
+        # append to collection
+        output.append(x_i)
+    return torch.stack(output).float()
+
+@amp.autocast(enabled=False)
+def adaptive_rope_apply(x, grid_sizes, freqs):
     n, c = x.size(2), x.size(3) // 2
     # seq_len = grid_sizes[0].prod().item()  # f * h * w
     seq_len = x.shape[1]
@@ -96,8 +126,10 @@ class WanRMSNorm(nn.Module):
 
     def _norm(self, x):
         return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+    
 
-class WanSelfAttention_masked_KV(nn.Module):
+
+class WanSelfAttention_jano(nn.Module):
     def __init__(self,
                  dim,
                  num_heads,
@@ -119,6 +151,8 @@ class WanSelfAttention_masked_KV(nn.Module):
         if GlobalEnv.get_envs("janox") == "pab":
             self.jano_pab = True
             self.pab_manager = get_pab_manager()
+            
+        self.cache_x = GlobalEnv.get_envs("memory_efficient_cache")     
 
         # layers
         self.q = nn.Linear(dim, dim)
@@ -136,10 +170,10 @@ class WanSelfAttention_masked_KV(nn.Module):
             grid_sizes(Tensor): Shape [B, 3], the second dimension contains (F, H, W)
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
         """
+        mm = get_mask_manager()
         if self.jano_pab:
             cfg = GlobalEnv.get_envs("cond")
             name = f"{cfg}-{self.layer_idx}"
-            mm = get_mask_manager()
             if not self.pab_manager.self_calc and mm.step_level == 1: # 可以跳过计算
                 if self.layer_idx == 0:
                     print(f"{get_timestep()} | Self attn: SKIP.", flush=True)
@@ -150,15 +184,23 @@ class WanSelfAttention_masked_KV(nn.Module):
         # query, key, value function
         def qkv_fn(x):
             q = self.norm_q(self.q(x)).view(b, s, n, d)
-            k = self.norm_k(self.k(x)).view(b, s, n, d)
-            v = self.v(x).view(b, s, n, d)
+            if self.cache_x:
+                x = mm.process_x_sequence(x, GlobalEnv.get_envs("cond"), self.layer_idx)
+                s1 = x.shape[1]
+            else:
+                s1 = s
+            k = self.norm_k(self.k(x)).view(b, s1, n, d)
+            v = self.v(x).view(b, s1, n, d)
             return q, k, v
 
         q, k, v = qkv_fn(x)
-        q = rope_apply(q, grid_sizes, freqs)
-        k = rope_apply(k, grid_sizes, freqs)
-        mm = get_mask_manager()
-        if mm is not None:
+        q = adaptive_rope_apply(q, grid_sizes, freqs)
+        if self.cache_x:
+            k = origin_rope_apply(k, grid_sizes, freqs)
+        else:
+            k = adaptive_rope_apply(k, grid_sizes, freqs)
+
+        if not self.cache_x and mm is not None:
             k, v = mm.process_kv_sequence(
                 kv = torch.cat([k, v]),
                 name = GlobalEnv.get_envs("cond"),
