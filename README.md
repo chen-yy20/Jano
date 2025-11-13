@@ -43,7 +43,7 @@ export PYTHONPATH=$PYTHONPATH:$(pwd)
 
 取决与你的集群管理机制。
 
-基于slurm的集群可以直接使用`bash jano_wan_2gpu.sh`来启动两卡。
+基于slurm的集群可以直接使用`bash 2gpu_wan_run.sh`来启动两卡。
 目前支持`jano`和`pab`的两卡运行，修改`infer.sh`来选择跑哪个。
 
 ```
