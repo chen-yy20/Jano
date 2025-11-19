@@ -735,7 +735,6 @@ class FluxPipeline(
             mask_manager = init_mask_manager(
                 seq_len=latents.shape[1],
                 num_inference_steps=num_inference_steps,
-                layer_num=19+38, # normal layers + single layers
             )
         
         use_jano_pab = False

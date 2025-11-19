@@ -7,6 +7,8 @@ from skimage import morphology
 from skimage import measure
 import matplotlib.pyplot as plt
 
+import torch.fft as fft
+
 from .block_manager import init_block_manager
 from .stuff import get_timestep, store_feature
 from utils.envs import GlobalEnv
@@ -51,6 +53,7 @@ class DynamicAnalyzer:
         
     def step(self, latent):
         """存储潜变量，供后续分析"""
+        # latent shape： [C,T,H,W]
         step = get_timestep()
         if step <= self.analysis_steps:
             self.stored_features.append(latent)
@@ -175,6 +178,63 @@ class DynamicAnalyzer:
                     enhanced_combined[start_idx:end_idx] = enhanced_layer.flatten()
         
         return enhanced_combined
+    import torch
+    
+    def _compute_fft_dynamics(self, blocked_latents: torch.Tensor):
+        # 先把 steps 维度平均掉，得到 (blocknum, t, w, h)
+        x = blocked_latents.mean(dim=0)                 # (B, T, W, H)
+
+        # ----------------  temporal dynamics  ----------------
+        # 1D-FFT along t
+        t_fft = fft.rfft(x, dim=1)                      # (B, T//2+1, W, H)
+        t_mag = t_fft.abs()                             # 幅值
+        # 在 W,H 上平均
+        t_mag = t_mag.mean(dim=(-2, -1))                # (B, T//2+1)
+        # 能量
+        temporal_dynamics = (t_mag ** 2).sum(dim=-1)    # (B,)
+
+        # ----------------  spatial dynamics  -----------------
+        # 展平 W,H -> s    (B, T, S)
+        s_feat = x.flatten(start_dim=-2)                # (B, T, S)
+        # 1D-FFT along s
+        s_fft = fft.rfft(s_feat, dim=-1)                # (B, T, S//2+1)
+        s_mag = s_fft.abs()                             # 幅值
+        # 在 T 上平均
+        s_mag = s_mag.mean(dim=1)                       # (B, S//2+1)
+        # 能量
+        spatial_dynamics = (s_mag ** 2).sum(dim=-1)     # (B,)
+
+        return temporal_dynamics, spatial_dynamics
+
+    def _compute_var_dynamics(self, blocked_latents: torch.Tensor):
+        """
+        参数
+        ----
+        blocked_latents: (steps, blocknum, t, w, h)
+
+        返回
+        ----
+        temporal_dynamics:  (blocknum,)  每个 block 在 t 维度上的方差
+        spatial_dynamics :  (blocknum,)  每个 block 在 s 维度上的方差
+        """
+        # 先把 steps 维度平均掉，得到 (blocknum, t, w, h)
+        x = blocked_latents.mean(dim=0)
+        
+        # ----------------  temporal dynamics  ----------------
+        # 在 w, h 上平均 -> (blocknum, t)
+        t_feat = x.mean(dim=(-2, -1))
+        # 对 t 维计算方差
+        temporal_dynamics = t_feat.var(dim=-1)          # (blocknum,)
+
+        # ----------------  spatial dynamics  -----------------
+        # 把 w, h 展平成 s -> (blocknum, t, s)
+        s_feat = x.flatten(start_dim=-2)                # (blocknum, t, s)
+        # 在 t 维平均 -> (blocknum, s)
+        s_feat = s_feat.mean(dim=1)
+        # 对 s 维计算方差
+        spatial_dynamics = s_feat.var(dim=-1)           # (blocknum,)
+
+        return temporal_dynamics, spatial_dynamics
 
     def analyze(self):
         """储存完profile steps后, 进行动态性分析并返回enhanced combined score"""
@@ -194,7 +254,10 @@ class DynamicAnalyzer:
             print(f"Stored stack_latent ({latents_tensor.shape}).", flush=True)
         
         # 计算动态性（在GPU上）
+        print(f"{blocked_latents.shape=}", flush=True) # (steps, blocknum, t, w, h)
         temporal_dynamics, spatial_dynamics = self._compute_dynamics(blocked_latents)
+        print(f"{temporal_dynamics.shape=} {spatial_dynamics.shape=}", flush=True) # (blocknum), (blocknum)
+        # exit()
         
         # 转换到CPU进行后续处理
         temporal_dynamics_cpu = temporal_dynamics.cpu().numpy()
@@ -217,6 +280,7 @@ class DynamicAnalyzer:
         )
         
         print(f"Analysis completed for {self.tag}\n", flush=True)
+        # exit()
         
         return enhanced_combined
     

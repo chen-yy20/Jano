@@ -108,9 +108,29 @@ class FluxSingleTransformerBlock(nn.Module):
         
         if self.jano_pab:
             mm = get_mask_manager()
-            if not self.pab_manager.self_calc and mm.step_level == 1: # 可以跳过计算
-                attn_output = self.pab_manager.self_attn_cache[self.layer_id]
+            if not self.pab_manager.self_calc:
+                if mm is None or mm.step_level == 1: # 可以跳过计算
+                    attn_output = self.pab_manager.self_attn_cache[self.layer_id]
                 # print(f"{get_timestep()} | pab fetched attn output {attn_output.shape=}", flush=True)
+                else:
+                    attn_output = self.attn(
+                        hidden_states=norm_hidden_states,
+                        image_rotary_emb=image_rotary_emb,
+                        **joint_attention_kwargs,
+                    )
+                    if self.pab_manager.self_store:
+                        if mm is None:
+                            store_output = attn_output
+                        elif mm.step_level == 3:
+                            pab_static_mask = torch.cat([self.txt_mask, mm.active_bool_mask])
+                            store_output = attn_output[:, pab_static_mask, :]
+                        elif mm.step_level == 2:
+                            pab_static_mask = torch.cat([self.txt_mask, mm.active_bool_mask_in_l2])
+                            store_output = attn_output[:, pab_static_mask, :]
+                        else:
+                            store_output = attn_output
+
+                        self.pab_manager.self_attn_cache[self.layer_id] = store_output
             else:
                 attn_output = self.attn(
                     hidden_states=norm_hidden_states,
@@ -118,8 +138,9 @@ class FluxSingleTransformerBlock(nn.Module):
                     **joint_attention_kwargs,
                 )
                 if self.pab_manager.self_store:
-                    
-                    if mm.step_level == 3:
+                    if mm is None:
+                        store_output = attn_output
+                    elif mm.step_level == 3:
                         pab_static_mask = torch.cat([self.txt_mask, mm.active_bool_mask])
                         store_output = attn_output[:, pab_static_mask, :]
                     elif mm.step_level == 2:
@@ -224,28 +245,31 @@ class FluxTransformerBlock(nn.Module):
         # Attention.
         if self.jano_pab:
             mm = get_mask_manager()
-            if not self.pab_manager.self_calc and mm.step_level == 1: # 可以跳过计算
-                attn_output, context_attn_output = self.pab_manager.self_attn_cache[self.layer_id]
-                if self.layer_id == 0:
-                    print(f"{get_timestep()} | PAB SKIP.", flush=True)
-            else:
-                attn_output, context_attn_output = self.attn(
-                    hidden_states=norm_hidden_states,
-                    encoder_hidden_states=norm_encoder_hidden_states,
-                    image_rotary_emb=image_rotary_emb,
-                    **joint_attention_kwargs,
-                )
-                # print(f"{attn_output.shape=}, {context_attn_output.shape=}", flush=True)
-                if self.pab_manager.self_store:
-                    if mm.step_level == 3:
-                        store_output = attn_output[:, mm.active_bool_mask, :]
-                    elif mm.step_level == 2:
-                        store_output = attn_output[:, mm.active_bool_mask_in_l2, :]
-                    else:
-                        store_output = attn_output
-                    self.pab_manager.self_attn_cache[self.layer_id] = store_output, context_attn_output
-                    
-                    # print(f"{get_timestep()}-{self.layer_id} |pab stored attn output {store_output.shape=}", flush=True)
+            if not self.pab_manager.self_calc:
+                if mm is None or mm.step_level == 1: # 可以跳过计算
+                    attn_output, context_attn_output = self.pab_manager.self_attn_cache[self.layer_id]
+                    if self.layer_id == 0:
+                        print(f"{get_timestep()} | PAB SKIP.", flush=True)
+            
+            attn_output, context_attn_output = self.attn(
+                hidden_states=norm_hidden_states,
+                encoder_hidden_states=norm_encoder_hidden_states,
+                image_rotary_emb=image_rotary_emb,
+                **joint_attention_kwargs,
+            )
+            # print(f"{attn_output.shape=}, {context_attn_output.shape=}", flush=True)
+            if self.pab_manager.self_store:
+                if mm is None:
+                    store_output = attn_output
+                elif mm.step_level == 3:
+                    store_output = attn_output[:, mm.active_bool_mask, :]
+                elif mm.step_level == 2:
+                    store_output = attn_output[:, mm.active_bool_mask_in_l2, :]
+                else:
+                    store_output = attn_output
+                self.pab_manager.self_attn_cache[self.layer_id] = store_output, context_attn_output
+                
+                # print(f"{get_timestep()}-{self.layer_id} |pab stored attn output {store_output.shape=}", flush=True)
         else:
             attn_output, context_attn_output = self.attn(
                 hidden_states=norm_hidden_states,

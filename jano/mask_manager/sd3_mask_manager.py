@@ -44,7 +44,7 @@ def format_memory(bytes):
     return f"{bytes / 1024**3:.2f}GB"
 
 class MaskManager:
-    def __init__(self, seq_len: int, num_inference_steps: int):
+    def __init__(self, num_inference_steps: int):
         self.warmup_steps = GlobalEnv.get_envs("warmup_steps")
         self.cooldown_steps = GlobalEnv.get_envs("cooldown_steps")
         self.static_interval = GlobalEnv.get_envs("static_interval")
@@ -52,9 +52,9 @@ class MaskManager:
         self.enable = GlobalEnv.get_envs("enable_stdit")
         
         self.num_inference_steps = num_inference_steps
-        self.full_seq_len = seq_len
-        self.medium_seqlen = seq_len
-        self.active_seqlen = seq_len
+        self.full_seq_len = 0
+        self.medium_seqlen = 0
+        self.active_seqlen = 0
         
         self.step_level = 0
         
@@ -172,8 +172,9 @@ class MaskManager:
         elif (timestep-self.warmup_steps-1) % self.static_interval == 0:
             self.step_level = 3 # full compute w update
         elif (timestep-self.warmup_steps-1) % self.medium_interval == 0:
-            self.step_level = 2 # medium compute
-        else:
+            # self.step_level = 2 # medium compute
+            self.step_level = 1 # no medium for sd3
+        else: 
             self.step_level = 1 # active compute
         
     def get_masked_rotary(self, rotary: tuple, txt_seq_len: int = 0) -> tuple:
@@ -288,7 +289,7 @@ class MaskManager:
             self.restored_output[:, self.static_bool_mask, :] = self.static_cache[state_key]
             return self.restored_output
         
-    def process_masked_kv_sequence(self, key: torch.Tensor, value: torch.Tensor, layer_idx: int, txt_seq_len: int = 0) -> tuple:
+    def process_masked_kv_sequence(self, key: torch.Tensor, value: torch.Tensor, layer_idx: int) -> tuple:
         """
         处理masked序列，适用于key和value张量
         
@@ -303,7 +304,6 @@ class MaskManager:
         if self.step_level == 0:
             return key, value
         
-        assert txt_seq_len > 0
         state_key = str(layer_idx)
         
         x = torch.cat([key, value], dim=0)
@@ -312,14 +312,14 @@ class MaskManager:
         
         if self.step_level == 3:
             # store
-            img_seq = x[:, :, txt_seq_len:, :]  # [B,H,img_S,D]
+            img_seq = x
             self.static_cache[state_key] = img_seq[:, :, self.static_bool_mask, :]
             self.medium_cache[state_key] = img_seq[:, :, self.medium_bool_mask, :]
             result = x
                 
         elif self.step_level == 2:
             # 分离文本和图像序列
-            img_seq = x[:, :, txt_seq_len:, :]  # [B,H,img_S,D]
+            img_seq = x
             self.medium_cache[state_key] = img_seq[:, :, self.medium_bool_mask_in_l2, :]
             # # 恢复图像序列部分
             result = torch.cat([x, self.static_cache[state_key]], dim=2) # 不重排，而是直接连接
@@ -356,9 +356,9 @@ class MaskManager:
 
 # ================================ APIs =================================
         
-def init_mask_manager(seq_len, num_inference_steps) -> MaskManager:
+def init_mask_manager(num_inference_steps) -> MaskManager:
     """初始化MaskManager"""
-    mask_manager = MaskManager(seq_len, num_inference_steps)
+    mask_manager = MaskManager(num_inference_steps)
     GlobalEnv.set_envs('MM', mask_manager)
     return mask_manager
     

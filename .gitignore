@@ -2,5 +2,10 @@ wan_bckup
 *.mp4
 *.png
 *.log
+*.json
+*.txt
+*.pyc
+*.pt
 note.md
+evaluation
 __pycache__

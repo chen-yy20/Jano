@@ -361,6 +361,8 @@ def visualize_mask(mask: torch.Tensor):
     """
     # 使用第一个通道的mask进行可视化
     mask = mask[0].cpu().float()  # [F,H,W]
+    # path = os.path.join(GlobalEnv.get_envs("save_dir"), "mask.pt")
+    # torch.save(mask, path)
     
     bm = get_block_manager()
     

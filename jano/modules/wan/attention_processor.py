@@ -47,7 +47,10 @@ class RoPEManager:
             ], dim=-1).reshape(f * h * w, 1, -1)
             
         mm = get_mask_manager()
-        level = mm.step_level
+        if mm is None:
+            return self.full_freqs_i
+        else:
+            level = mm.step_level
         if level == 3 or level == 0:
             return self.full_freqs_i
         
@@ -193,10 +196,11 @@ class WanSelfAttention_jano(nn.Module):
         if self.jano_pab:
             cfg = GlobalEnv.get_envs("cond")
             name = f"{cfg}-{self.layer_idx}"
-            if not self.pab_manager.self_calc and mm.step_level == 1: # 可以跳过计算
-                if self.layer_idx == 0:
-                    print(f"{get_timestep()} | Self attn: SKIP.", flush=True)
-                return self.pab_manager.self_attn_cache[name]
+            if not self.pab_manager.self_calc: 
+                if mm is None or mm.step_level == 1: # 可以跳过计算
+                    if self.layer_idx == 0:
+                        print(f"{get_timestep()} | Self attn: SKIP.", flush=True)
+                    return self.pab_manager.self_attn_cache[name]
 
         b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
 
@@ -236,7 +240,9 @@ class WanSelfAttention_jano(nn.Module):
         x = self.o(x)
         
         if self.jano_pab and self.pab_manager.should_store:
-            if mm.step_level == 3:
+            if mm is None:
+                store_output = x
+            elif mm.step_level == 3:
                 store_output = x[:, mm.active_bool_mask, ...]
             elif mm.step_level == 2:
                 store_output = x[:, mm.active_bool_mask_in_l2, ...]

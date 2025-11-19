@@ -26,7 +26,7 @@ def create_random_latents_mask(x: torch.Tensor, ratio: float = 0.5, device=None)
     """
     C, F, H, W = x.shape
     # 初始化全False的mask
-    mask = torch.ones((C, F, H, W), dtype=torch.bool, device=device)
+    mask = torch.ones((C, F, H, W), dtype=torch.int8, device=device)
     
     # 计算F*H*W的总数
     total_points = F * H * W
@@ -42,7 +42,7 @@ def create_random_latents_mask(x: torch.Tensor, ratio: float = 0.5, device=None)
     
     # 对所有通道应用相同的mask
     for c in range(C):
-        mask[c, f_idx, h_idx, w_idx] = False  # False 表示mask，不进行计算
+        mask[c, f_idx, h_idx, w_idx] = 3
         
     return mask
 
@@ -131,6 +131,77 @@ class MaskManager:
             
         #     # 同步事件
         #     self.prefetch_event = torch.cuda.Event()
+        
+    # def generate_ratio_mask(self, combined_score):
+    #     """
+    #     基于时空复杂度分析创建mask，使用固定比例:
+    #     1: 低动态区域 (底部60%)
+    #     2: 中等动态区域 (中间30%)
+    #     3: 高动态区域 (顶部10%)
+    #     """
+    #     combined_score = torch.from_numpy(combined_score)
+    #     print_score_stats(combined_score)
+        
+    #     bm = get_block_manager()
+    #     C, T, H, W = bm.latent_shape
+        
+    #     # 计算分位数阈值
+    #     sorted_scores = torch.sort(combined_score.flatten())[0]
+    #     num_elements = len(sorted_scores)
+        
+    #     # 设定比例阈值 (可以根据需要调整这些比例)
+    #     low_ratio = GlobalEnv.get_envs("low_r")  # 60%的区域为低动态
+    #     medium_ratio = GlobalEnv.get_envs("med_r")  # 30%的区域为中等动态
+    #     # 剩余10%为高动态
+        
+    #     # 计算阈值
+    #     medium_thresh_idx = int(num_elements * low_ratio)
+    #     high_thresh_idx = int(num_elements * (low_ratio + medium_ratio))
+        
+    #     medium_thresh = sorted_scores[medium_thresh_idx]
+    #     high_thresh = sorted_scores[high_thresh_idx]
+        
+    #     # 创建块级别的标注mask (默认为1，表示低动态)
+    #     self.block_mask = torch.ones_like(combined_score, dtype=torch.int8)
+        
+    #     # 中等动态区域
+    #     medium_condition = (combined_score > medium_thresh) & (combined_score <= high_thresh)
+    #     self.block_mask = torch.where(medium_condition, 2, self.block_mask)
+        
+    #     # 高动态区域
+    #     high_condition = combined_score > high_thresh
+    #     self.block_mask = torch.where(high_condition, 3, self.block_mask)
+        
+    #     # 将block mask转换为完整分辨率mask
+    #     bt, bh, bw = bm.block_size
+    #     nt, nh, nw = bm.padded_T // bt, bm.padded_H // bh, bm.padded_W // bw
+        
+    #     block_mask_3d = self.block_mask.reshape(nt, nh, nw)
+    #     latent_mask = torch.zeros((T, H, W), dtype=torch.int64, device=torch.cuda.current_device())
+        
+    #     # 扩展block mask到完整分辨率
+    #     for t in range(nt):
+    #         for h in range(nh):
+    #             for w in range(nw):
+    #                 value = block_mask_3d[t, h, w]
+    #                 latent_mask[t*bt:(t+1)*bt, 
+    #                         h*bh:(h+1)*bh, 
+    #                         w*bw:(w+1)*bw] = value
+        
+    #     latent_mask = latent_mask.unsqueeze(0).expand(C, -1, -1, -1)
+        
+    #     # 统计各个区域的比例
+    #     total_pixels = C * T * H * W
+    #     low_dynamic_ratio = (latent_mask == 1).sum().item() / total_pixels * 100
+    #     medium_dynamic_ratio = (latent_mask == 2).sum().item() / total_pixels * 100
+    #     high_dynamic_ratio = (latent_mask == 3).sum().item() / total_pixels * 100
+        
+    #     print(f"Created dynamics-based mask with:")
+    #     print(f"Low dynamic regions (1): {low_dynamic_ratio:.2f}%")
+    #     print(f"Medium dynamic regions (2): {medium_dynamic_ratio:.2f}%")
+    #     print(f"High dynamic regions (3): {high_dynamic_ratio:.2f}%")
+    
+    #     return latent_mask
 
     def generate_mask(self, combined_score):
         """
@@ -189,6 +260,8 @@ class MaskManager:
         print(f"High dynamic regions (3): {high_dynamic_ratio:.2f}%")
         
         # 可视化
+        # latent_mask = create_random_latents_mask(latent_mask, GlobalEnv.get_envs("random")) # 启用了随机mask
+        # latent_mask = self.generate_ratio_mask(combined_score)
         visualize_mask(latent_mask)
         self.latent_mask = latent_mask
         self.sequence_mask = self.transform_mask(latent_mask)
