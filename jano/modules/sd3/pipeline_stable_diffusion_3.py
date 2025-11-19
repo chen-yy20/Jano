@@ -1117,21 +1117,20 @@ class StableDiffusion3Pipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromSingle
                             )
                     # print(f"{noise_pred.shape=}", flush=True)
                     if use_jano:
-                        with get_timer("jano_step"):
-                            # unpack: 1, 4096, 16 -> 1, 16, 128, 128
-                            # print(f"{unpacked_noise_pred.shape=}, {noise_pred.shape=}")
-                            analyze_result = analyzer.step(transformer_to_std_shape(noise_pred))               
-                            if analyze_result is not None: # 设置好mask
-                                latent_mask = mask_manager.generate_mask(analyze_result) # shape 16, 1, 128, 128
-                                # print(f"{latent_mask.shape=}", flush=True)
-                                # # transform to sequence mask
-                                packed_mask = pack_latents(latent_mask, batch_size, num_channels_latents, 128, 128)
-                                # 检查每一行是否完全相同
-                                is_same = (packed_mask[0, :, :] == packed_mask[0, :, :1]).all(dim=-1)
-                                assert is_same.all(), "Something is wrong with mask, plz contact developer."
-                                sequence_mask = packed_mask[0,:,0]
-                                print(f"{sequence_mask.shape=}, {sequence_mask=}", flush=True)
-                                mask_manager.set_sequence_mask(sequence_mask)
+                        # unpack: 1, 4096, 16 -> 1, 16, 128, 128
+                        # print(f"{unpacked_noise_pred.shape=}, {noise_pred.shape=}")
+                        analyze_result = analyzer.step(transformer_to_std_shape(noise_pred))               
+                        if analyze_result is not None: # 设置好mask
+                            latent_mask = mask_manager.generate_mask(analyze_result) # shape 16, 1, 128, 128
+                            # print(f"{latent_mask.shape=}", flush=True)
+                            # # transform to sequence mask
+                            packed_mask = pack_latents(latent_mask, batch_size, num_channels_latents, 128, 128)
+                            # 检查每一行是否完全相同
+                            is_same = (packed_mask[0, :, :] == packed_mask[0, :, :1]).all(dim=-1)
+                            assert is_same.all(), "Something is wrong with mask, plz contact developer."
+                            sequence_mask = packed_mask[0,:,0]
+                            print(f"{sequence_mask.shape=}, {sequence_mask=}", flush=True)
+                            mask_manager.set_sequence_mask(sequence_mask)
 
                     # compute the previous noisy sample x_t -> x_t-1
                     latents_dtype = latents.dtype

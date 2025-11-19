@@ -132,7 +132,7 @@ class MaskManager:
         print(f"High dynamic regions (3): {high_dynamic_ratio:.2f}%")
         
         # 可视化
-        visualize_mask(latent_mask)
+        # visualize_mask(latent_mask)
         self.latent_mask = latent_mask
         print(f"{self.latent_mask.shape=}")
         

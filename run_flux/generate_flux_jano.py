@@ -25,10 +25,10 @@ WARMUP = 7
 # TAG = f"W_{WARMUP}_B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]})_DS({DIFFUSION_STENGTH}-{DIFFUSION_DISTANCE})_S{STATIC_THRESH}_M{MEDIUM_THRESH}" if ENABLE_JANO else "ori"
 # OUTPUT_DIR = f"./flux_results/jano_flux_result/{get_prompt_id(PROMPT)}"
 OUTPUT_DIR = f"../evaluation/janox_flux/{get_prompt_id(PROMPT)}"
-TAG = "jano_pab"
+TAG = "jano"
 
 # Jano+X
-JANO_X = "pab" # 设置为pab去启用jano_pab
+JANO_X = "no" # 设置为pab去启用jano_pab
 GlobalEnv.set_envs("janox", JANO_X) 
 if JANO_X == "pab":
     from flux.pab.pab_manager import init_pab_manger
