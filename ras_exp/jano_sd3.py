@@ -68,9 +68,9 @@ init_timer()
 def sd3_inf(args):
     pipeline = StableDiffusion3Pipeline.from_pretrained(MODEL_PATH, torch_dtype=torch.float16, use_auth_token=True)
     pipeline.transformer = SD3Transformer2DModel.from_pretrained(f"{MODEL_PATH}/transformer", torch_dtype=torch.float16)
+    pipeline.to("cuda")
     if ENABLE_JANO:
         wrap_sd3_model_with_jano(pipeline.transformer)
-    pipeline.to("cuda")
     if ENABLE_RAS:
         pipeline = update_sd3_pipeline(pipeline)
     generator = torch.Generator("cuda").manual_seed(args.seed) if args.seed is not None else None
