@@ -75,6 +75,18 @@ class DynamicAnalyzer:
                 return enhanced_combined
         return None
     
+    def ras_step(self, latent):
+        """存储潜变量，供后续分析"""
+        # latent shape： [C,T,H,W]
+        step = get_timestep()
+        if step % 5 == 0:
+            self.stored_features = [latent]
+            print(f"Step {step} | Stored noise_pred (shape={latent.shape})", flush=True)
+            enhanced_combined = self.analyze()
+            self.stored_features = None
+            return enhanced_combined
+        return None
+    
     def _compute_dynamics(self, blocked_latents):
         """计算时空动态性"""
         device = blocked_latents.device
@@ -285,25 +297,31 @@ class DynamicAnalyzer:
         
         # 计算动态性（在GPU上）
         # print(f"{blocked_latents.shape=}", flush=True) # (steps, blocknum, t, w, h)
-        temporal_dynamics, spatial_dynamics = self._compute_dynamics(blocked_latents)
-        # print(f"{temporal_dynamics.shape=} {spatial_dynamics.shape=}", flush=True) # (blocknum), (blocknum)
+        if GlobalEnv.get_envs("enable_stdit"):
+            temporal_dynamics, spatial_dynamics = self._compute_dynamics(blocked_latents)
+        elif GlobalEnv.get_envs("ras_mask"):
+            temporal_dynamics, spatial_dynamics = self._compute_var_dynamics(blocked_latents)
+        # print(f"{temporal_dynamics=} {spatial_dynamics=}", flush=True) # (blocknum), (blocknum)
         # exit()
-                
-        original_combined = self.temporal_weight * temporal_dynamics + self.spatial_weight * spatial_dynamics
-        original_combined = min_max_normalize(original_combined)
         
-        # 计算增强版本
-        enhanced_combined = self._enhance_combined_score(
-            original_combined,
-            (self.block_manager.nt, self.block_manager.nh, self.block_manager.nw)
-        )
+        if GlobalEnv.get_envs("enable_stdit"):
+            original_combined = self.temporal_weight * temporal_dynamics + self.spatial_weight * spatial_dynamics
+            original_combined = min_max_normalize(original_combined)
+            
+            # 计算增强版本
+            enhanced_combined = self._enhance_combined_score(
+                original_combined,
+                (self.block_manager.nt, self.block_manager.nh, self.block_manager.nw)
+            )
+        else:
+            enhanced_combined = spatial_dynamics
         
         # 可视化 - 确保传入的都是numpy数组
-        # visualize_block_dynamics(
-        #     temporal_dynamics_cpu, spatial_dynamics_cpu, original_combined, enhanced_combined,
-        #     (self.block_manager.nt, self.block_manager.nh, self.block_manager.nw),
-        #     save_name=self.tag
-        # )
+        visualize_single_dynamics(
+            enhanced_combined,
+            (self.block_manager.nt, self.block_manager.nh, self.block_manager.nw),
+            save_name=self.tag
+        )
         
         print(f"Analysis completed for {self.tag}\n", flush=True)
         # exit()
@@ -412,3 +430,70 @@ def visualize_block_dynamics(temporal_dynamics, spatial_dynamics, original_combi
     print(f"Enhancement ratio: {enhancement_ratio:.4f}")
     
     return save_path, stats
+
+def visualize_single_dynamics(enhanced_combined, block_dims, save_name="block_dynamics"):
+    """
+    简化的可视化函数，只显示一个热力图，支持数据保存和加载
+    
+    Args:
+        enhanced_combined: torch.Tensor, 增强复杂度
+        block_dims: tuple, (nt, nh, nw) 块维度
+        save_name: str, 保存文件名
+    """
+    # 确定保存路径
+    save_dir = GlobalEnv.get_envs("save_dir")
+    if GlobalEnv.get_envs("ras_mask"):
+        curr_steps = get_timestep()
+        base_name = f"ras_{curr_steps}"
+    else:
+        base_name = save_name
+    
+    img_path = os.path.join(save_dir, f"{base_name}_dynamics.png")
+    data_path = os.path.join(save_dir, f"{base_name}_dynamics_data.npz")
+    
+    # 检查是否存在保存的数据
+    if os.path.exists(data_path):
+        # 从文件加载数据
+        data = np.load(data_path)
+        enhanced_combined_2d = data['heatmap']
+        mean_score = data['mean']
+        print(f"Loading existing data from: {data_path}")
+    else:
+        # 生成新的数据
+        nt, nh, nw = block_dims
+        
+        # 确保输入是在CPU上的numpy数组
+        if isinstance(enhanced_combined, torch.Tensor):
+            enhanced_combined = enhanced_combined.detach().cpu().numpy()
+        
+        # 将1D数据reshape为3D，然后计算时间平均
+        enhanced_combined_3d = enhanced_combined.reshape(nt, nh, nw)
+        enhanced_combined_2d = np.mean(enhanced_combined_3d, axis=0)
+        mean_score = enhanced_combined_2d.mean()
+        
+        # 保存数据
+        np.savez(data_path, 
+                 heatmap=enhanced_combined_2d,
+                 mean=mean_score,
+                 block_dims=np.array(block_dims))
+        print(f"Saving data to: {data_path}")
+    
+    # 绘制热力图
+    plt.figure(figsize=(8, 6))
+    im = plt.imshow(enhanced_combined_2d, cmap='viridis', aspect='auto')
+    plt.colorbar(im, shrink=0.8)
+    
+    plt.title(f'Enhanced Score\n(Mean: {mean_score:.4f})', fontsize=12)
+    plt.xlabel('Width Blocks')
+    plt.ylabel('Height Blocks')
+    
+    plt.tight_layout()
+    
+    # 保存图片
+    plt.savefig(img_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Enhanced dynamics visualization saved to: {img_path}")
+    print(f"Mean score: {mean_score:.4f}")
+    
+    return img_path, {'enhanced_mean': float(mean_score)}

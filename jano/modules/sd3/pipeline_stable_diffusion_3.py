@@ -1051,9 +1051,9 @@ class StableDiffusion3Pipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromSingle
                 self._joint_attention_kwargs.update(ip_adapter_image_embeds=ip_adapter_image_embeds)
                 
         # # analyzer 和 mask manager 初始化
-        use_jano = False
-        if GlobalEnv.get_envs("enable_stdit"):
-            use_jano = True
+        use_jano = GlobalEnv.get_envs("enable_stdit")
+        test_ras = GlobalEnv.get_envs("ras_mask")
+        if use_jano or test_ras:
             print(f"Using Jano: {height=} {width=} {num_channels_latents}")
             analyzer = DynamicAnalyzer(
                 C = num_channels_latents,
@@ -1066,7 +1066,6 @@ class StableDiffusion3Pipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromSingle
             mask_manager = init_mask_manager(
                 num_inference_steps=num_inference_steps,
             )
-            warmup = GlobalEnv.get_envs("warmup_steps")
 
         # 7. Denoising loop
         with get_timer("generate_e2e"):
@@ -1116,12 +1115,18 @@ class StableDiffusion3Pipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromSingle
                                 noise_pred + (noise_pred_text - noise_pred_skip_layers) * self._skip_layer_guidance_scale
                             )
                     # print(f"{noise_pred.shape=}", flush=True)
+                    
+                    if test_ras:
+                        # unpack: 1, 4096, 16 -> 1, 16, 128, 128
+                        # print(f"{unpacked_noise_pred.shape=}, {noise_pred.shape=}")
+                        analyze_result = analyzer.ras_step(transformer_to_std_shape(noise_pred))               
+                            
                     if use_jano:
                         # unpack: 1, 4096, 16 -> 1, 16, 128, 128
                         # print(f"{unpacked_noise_pred.shape=}, {noise_pred.shape=}")
                         analyze_result = analyzer.step(transformer_to_std_shape(noise_pred))               
                         if analyze_result is not None: # 设置好mask
-                            latent_mask = mask_manager.generate_mask(analyze_result) # shape 16, 1, 128, 128
+                            latent_mask = mask_manager.generate_mask(analyze_result, use_ratio=False) # shape 16, 1, 128, 128
                             # print(f"{latent_mask.shape=}", flush=True)
                             # # transform to sequence mask
                             packed_mask = pack_latents(latent_mask, batch_size, num_channels_latents, 128, 128)

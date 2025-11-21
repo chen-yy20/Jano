@@ -117,7 +117,6 @@ class RASFlowMatchEulerDiscreteScheduler(FlowMatchEulerDiscreteScheduler):
             metric = torch.norm(diff, p=2, dim=-1).view(height // ras_manager.MANAGER.patch_size, ras_manager.MANAGER.patch_size, width // ras_manager.MANAGER.patch_size, ras_manager.MANAGER.patch_size).transpose(-2, -3).mean(-1).mean(-1).view(-1)
         else:
             raise ValueError("Unknown metric")
-
         # scale the metric with the drop count to avoid starvation
         metric *= torch.exp(ras_manager.MANAGER.starvation_scale * self.drop_cnt)
         current_skip_num = ras_manager.MANAGER.skip_token_num_list[self._step_index + 1]

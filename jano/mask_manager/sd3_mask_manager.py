@@ -79,12 +79,12 @@ class MaskManager:
         # 记录最大内存使用
         self.max_memory = 0
         
-    def generate_mask(self, combined_score: torch.Tensor):
-        
+    def generate_mask(self, combined_score: torch.Tensor, use_ratio=False, visualize=False):
+    
         if isinstance(combined_score, np.ndarray):
             combined_score = torch.from_numpy(combined_score)
         
-        print(f"{combined_score.shape=}", flush=True)
+        print(f"{combined_score=}", flush=True)
         static_thresh = GlobalEnv.get_envs("static_thresh")
         medium_thresh = GlobalEnv.get_envs("medium_thresh")
         
@@ -94,15 +94,23 @@ class MaskManager:
         # 创建块级别的标注mask (默认为1，表示低动态)
         self.block_mask = torch.ones_like(combined_score, dtype=torch.int8)
         
-        # 中等动态区域: 任一维度超过static阈值但都不超过medium阈值
-        medium_condition = (combined_score > static_thresh) & (combined_score <= medium_thresh)
-        self.block_mask = torch.where(medium_condition, 2, self.block_mask)
+        if use_ratio:
+            # 基于比例的分配方法
+            threshold = torch.quantile(combined_score.float(), 0.5)  # 获取中位数
+            # 分数高于中位数的设为3，低于的保持为1
+            high_condition = combined_score > threshold
+            self.block_mask = torch.where(high_condition, 3, self.block_mask)
+        else:
+            # 原有的基于阈值的方法
+            # 中等动态区域: 任一维度超过static阈值但都不超过medium阈值
+            medium_condition = (combined_score > static_thresh) & (combined_score <= medium_thresh)
+            self.block_mask = torch.where(medium_condition, 2, self.block_mask)
+            
+            # 高动态区域: 任一维度超过medium阈值
+            high_condition = combined_score > medium_thresh
+            self.block_mask = torch.where(high_condition, 3, self.block_mask)
         
-        # 高动态区域: 任一维度超过medium阈值
-        high_condition = combined_score > medium_thresh
-        self.block_mask = torch.where(high_condition, 3, self.block_mask)
-        
-         # 将block mask转换为完整分辨率mask
+        # 将block mask转换为完整分辨率mask
         bt, bh, bw = bm.block_size
         nt, nh, nw = bm.padded_T // bt, bm.padded_H // bh, bm.padded_W // bw
         
@@ -128,11 +136,13 @@ class MaskManager:
         
         print(f"Created dynamics-based mask with:")
         print(f"Low dynamic regions (1): {low_dynamic_ratio:.2f}%")
-        print(f"Medium dynamic regions (2): {medium_dynamic_ratio:.2f}%")
+        if not use_ratio:
+            print(f"Medium dynamic regions (2): {medium_dynamic_ratio:.2f}%")
         print(f"High dynamic regions (3): {high_dynamic_ratio:.2f}%")
         
         # 可视化
-        # visualize_mask(latent_mask)
+        if visualize:
+            visualize_mask(latent_mask)
         self.latent_mask = latent_mask
         print(f"{self.latent_mask.shape=}")
         

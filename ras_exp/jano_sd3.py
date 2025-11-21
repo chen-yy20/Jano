@@ -22,28 +22,29 @@ MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/sd3"
 PROMPT = "A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background."
 
 
-ANALYZE_BLOCK_SIZE = (1, HEIGHT//128,  WIDTH//128)
+ANALYZE_BLOCK_SIZE = (1, 4, 4)
 DIFFUSION_STENGTH = 0.8
 DIFFUSION_DISTANCE = 2
-STATIC_THRESH = 0.25
-MEDIUM_THRESH =0.25
-WARMUP = 5
+STATIC_THRESH = 0.2
+MEDIUM_THRESH =0.2
+WARMUP = 10
 
 ENABLE_JANO = 1
 ENABLE_RAS = 0
 
 OUTPUT_DIR = f"./sd3_results/{get_prompt_id(PROMPT)}"
 
+GlobalEnv.set_envs("ras_mask", 0)
 
 # TAG = f"W_{WARMUP}_B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]})_DS({DIFFUSION_STENGTH}-{DIFFUSION_DISTANCE})_S{STATIC_THRESH}_M{MEDIUM_THRESH}" if ENABLE_JANO else "ori"
 if ENABLE_JANO:
-    TAG = "jano"
+    TAG = "jano1"
 elif ENABLE_RAS:
     TAG = "ras"
 else:
     TAG = "ori"
     
-
+# TAG = "25"
 init_jano(
     enable=ENABLE_JANO,
     model="sd3",

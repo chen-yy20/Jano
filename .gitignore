@@ -5,6 +5,7 @@ wan_bckup
 *.json
 *.txt
 *.pyc
+*.npz
 *.pt
 note.md
 evaluation
