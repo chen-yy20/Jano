@@ -40,8 +40,6 @@ from jano.mask_manager.flux_mask_manager import get_mask_manager
 from .attention_processor import FluxAttnProcessor_jano, FluxAttnProcessor2_0
 from utils.envs import GlobalEnv
 
-from flux.pab.pab_manager import get_pab_manager
-
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
@@ -74,13 +72,6 @@ class FluxSingleTransformerBlock(nn.Module):
         else:
             processor = FluxAttnProcessor2_0()
             
-        self.jano_pab = False
-        if GlobalEnv.get_envs("janox") == "pab":
-            self.jano_pab = True
-            self.pab_manager = get_pab_manager()
-            self.layer_id = layer_idx
-            self.txt_mask = torch.ones(512, dtype=torch.bool, device=torch.cuda.current_device())
-            
         self.attn = Attention(
             query_dim=dim,
             cross_attention_dim=None,
@@ -106,57 +97,11 @@ class FluxSingleTransformerBlock(nn.Module):
         mlp_hidden_states = self.act_mlp(self.proj_mlp(norm_hidden_states))
         joint_attention_kwargs = joint_attention_kwargs or {}
         
-        if self.jano_pab:
-            mm = get_mask_manager()
-            if not self.pab_manager.self_calc:
-                if mm is None or mm.step_level == 1: # 可以跳过计算
-                    attn_output = self.pab_manager.self_attn_cache[self.layer_id]
-                # print(f"{get_timestep()} | pab fetched attn output {attn_output.shape=}", flush=True)
-                else:
-                    attn_output = self.attn(
-                        hidden_states=norm_hidden_states,
-                        image_rotary_emb=image_rotary_emb,
-                        **joint_attention_kwargs,
-                    )
-                    if self.pab_manager.self_store:
-                        if mm is None:
-                            store_output = attn_output
-                        elif mm.step_level == 3:
-                            pab_static_mask = torch.cat([self.txt_mask, mm.active_bool_mask])
-                            store_output = attn_output[:, pab_static_mask, :]
-                        elif mm.step_level == 2:
-                            pab_static_mask = torch.cat([self.txt_mask, mm.active_bool_mask_in_l2])
-                            store_output = attn_output[:, pab_static_mask, :]
-                        else:
-                            store_output = attn_output
-
-                        self.pab_manager.self_attn_cache[self.layer_id] = store_output
-            else:
-                attn_output = self.attn(
-                    hidden_states=norm_hidden_states,
-                    image_rotary_emb=image_rotary_emb,
-                    **joint_attention_kwargs,
-                )
-                if self.pab_manager.self_store:
-                    if mm is None:
-                        store_output = attn_output
-                    elif mm.step_level == 3:
-                        pab_static_mask = torch.cat([self.txt_mask, mm.active_bool_mask])
-                        store_output = attn_output[:, pab_static_mask, :]
-                    elif mm.step_level == 2:
-                        pab_static_mask = torch.cat([self.txt_mask, mm.active_bool_mask_in_l2])
-                        store_output = attn_output[:, pab_static_mask, :]
-                    else:
-                        store_output = attn_output
-
-                    self.pab_manager.self_attn_cache[self.layer_id] = store_output
-                    # print(f"{get_timestep()} |pab stored attn output {store_output.shape=}", flush=True)
-        else:
-            attn_output = self.attn(
-                hidden_states=norm_hidden_states,
-                image_rotary_emb=image_rotary_emb,
-                **joint_attention_kwargs,
-            )
+        attn_output = self.attn(
+            hidden_states=norm_hidden_states,
+            image_rotary_emb=image_rotary_emb,
+            **joint_attention_kwargs,
+        )
 
         hidden_states = torch.cat([attn_output, mlp_hidden_states], dim=2)
         gate = gate.unsqueeze(1)
@@ -200,11 +145,7 @@ class FluxTransformerBlock(nn.Module):
             raise ValueError(
                 "The current PyTorch version does not support the `scaled_dot_product_attention` function."
             )
-        self.jano_pab = False
-        if GlobalEnv.get_envs("janox") == "pab":
-            self.jano_pab = True
-            self.pab_manager = get_pab_manager()
-            self.layer_id = layer_idx
+       
         self.attn = Attention(
             query_dim=dim,
             cross_attention_dim=None,
@@ -243,40 +184,12 @@ class FluxTransformerBlock(nn.Module):
         )
         joint_attention_kwargs = joint_attention_kwargs or {}
         # Attention.
-        if self.jano_pab:
-            mm = get_mask_manager()
-            if not self.pab_manager.self_calc:
-                if mm is None or mm.step_level == 1: # 可以跳过计算
-                    attn_output, context_attn_output = self.pab_manager.self_attn_cache[self.layer_id]
-                    if self.layer_id == 0:
-                        print(f"{get_timestep()} | PAB SKIP.", flush=True)
-            
-            attn_output, context_attn_output = self.attn(
-                hidden_states=norm_hidden_states,
-                encoder_hidden_states=norm_encoder_hidden_states,
-                image_rotary_emb=image_rotary_emb,
-                **joint_attention_kwargs,
-            )
-            # print(f"{attn_output.shape=}, {context_attn_output.shape=}", flush=True)
-            if self.pab_manager.self_store:
-                if mm is None:
-                    store_output = attn_output
-                elif mm.step_level == 3:
-                    store_output = attn_output[:, mm.active_bool_mask, :]
-                elif mm.step_level == 2:
-                    store_output = attn_output[:, mm.active_bool_mask_in_l2, :]
-                else:
-                    store_output = attn_output
-                self.pab_manager.self_attn_cache[self.layer_id] = store_output, context_attn_output
-                
-                # print(f"{get_timestep()}-{self.layer_id} |pab stored attn output {store_output.shape=}", flush=True)
-        else:
-            attn_output, context_attn_output = self.attn(
-                hidden_states=norm_hidden_states,
-                encoder_hidden_states=norm_encoder_hidden_states,
-                image_rotary_emb=image_rotary_emb,
-                **joint_attention_kwargs,
-            )
+        attn_output, context_attn_output = self.attn(
+            hidden_states=norm_hidden_states,
+            encoder_hidden_states=norm_encoder_hidden_states,
+            image_rotary_emb=image_rotary_emb,
+            **joint_attention_kwargs,
+        )
 
         # Process attention outputs for the `hidden_states`.
         attn_output = gate_msa.unsqueeze(1) * attn_output

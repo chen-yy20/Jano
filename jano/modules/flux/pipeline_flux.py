@@ -736,11 +736,6 @@ class FluxPipeline(
                 seq_len=latents.shape[1],
                 num_inference_steps=num_inference_steps,
             )
-        
-        use_jano_pab = False
-        if GlobalEnv.get_envs("janox") == "pab":
-            pab_manager = get_pab_manager()
-            use_jano_pab = True
 
         # 6. Denoising loop
         with get_timer("generate_e2e"):
@@ -752,8 +747,6 @@ class FluxPipeline(
                     update_timestep(i)
                     if use_jano:
                         mask_manager.update_step_level()
-                    if use_jano_pab:
-                        pab_manager.check_calc(i)
                     
                     # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                     timestep = t.expand(latents.shape[0]).to(latents.dtype)

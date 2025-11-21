@@ -48,7 +48,7 @@ PROMPT = "Hare in snow."
 # 强加速
 # PROMPT = "A simple white pendulum swinging back and forth against a plain black background. The pendulum moves in a clear, rhythmic motion, creating a hypnotic pattern through time while maintaining minimal spatial complexity."
 
-MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Wan2.1-T2V-1.3B" # 1.3B / 14B
+MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Wan2.1-T2V-14B" # 1.3B / 14B
 
 T_WEIGHT = 0.7
 DIFFUSION_STENGTH = 0.8
@@ -56,7 +56,7 @@ DIFFUSION_DISTANCE = 1
 ANALYZE_BLOCK_SIZE = (7,6,8)
 STATIC_THRESH = 0.2
 MEDIUM_THRESH = 0.4
-WARMUP = 5
+WARMUP = 6
 ENABLE_JANO = 1
 MEMORY_EFFICIENT_CACHE = 0 # 如果炸内存了，设置这个参数为True，可以减少一半的kv cache内存使用。
 GlobalEnv.set_envs("memory_efficient_cache", MEMORY_EFFICIENT_CACHE)
@@ -64,32 +64,6 @@ GlobalEnv.set_envs("memory_efficient_cache", MEMORY_EFFICIENT_CACHE)
 TAG = f"jano_W{WARMUP}_mem{MEMORY_EFFICIENT_CACHE}_B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]})_S{STATIC_THRESH}_M{MEDIUM_THRESH}" if ENABLE_JANO else "ori"
 model_id = "1.3B" if "1.3B" in MODEL_PATH else "14B"
 OUTPUT_DIR = f"./wan_results/appendix_result/{model_id}/{get_prompt_id(PROMPT)}"
-# OUTPUT_DIR = f"../evaluation/janox/{get_prompt_id(PROMPT)}"
-# random_calc_ratio = 0.8
-# low_r = 0.1
-# GlobalEnv.set_envs("low_r", low_r)
-# med_r = 0.1
-# GlobalEnv.set_envs("med_r", med_r)
-
-# TAG = f"l{low_r}m{med_r}"
-# GlobalEnv.set_envs("random", random_calc_ratio)
-
-# TAG = "janox"
-# Jano+X
-JANO_X = "no"  # pab # no # teacache
-GlobalEnv.set_envs("janox", JANO_X) 
-
-if JANO_X == "pab":
-    from wan.jano_baselines.pab_manager import init_pab_manger
-    SELF_RANGE = 5
-    CROSS_RANGE = 5 # cross attention 占比太小，懒得适配，这个参数没用。
-    init_pab_manger(50, self_range=SELF_RANGE, cross_range=CROSS_RANGE, warmup=WARMUP, layer_interval=1)
-    TAG = f"pab_s{SELF_RANGE}_{TAG}"
-    
-if JANO_X == "teacache":
-    from wan.jano_baselines.teacache_forward import wrap_model_with_teacache
-    TEA_THRESH = 0.07
-    TAG = f"tea{TEA_THRESH}_{TAG}"
     
     
 # 2卡并行的设置，按照你的方法修改环境变量
@@ -498,11 +472,6 @@ def generate(args):
             use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
             t5_cpu=args.t5_cpu,
         )
-        
-        if GlobalEnv.get_envs("janox") == "teacache":
-            args.teacache_thresh = TEA_THRESH
-            args.use_ret_steps = False
-            wrap_model_with_teacache(wan_t2v, args)
 
         logging.info(
             f"Generating {'image' if 't2i' in args.task else 'video'} ...")

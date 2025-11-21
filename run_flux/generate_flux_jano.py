@@ -22,26 +22,8 @@ DIFFUSION_DISTANCE = 2
 STATIC_THRESH = 0.2
 MEDIUM_THRESH = 0.4
 WARMUP = 7
-# TAG = f"W_{WARMUP}_B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]})_DS({DIFFUSION_STENGTH}-{DIFFUSION_DISTANCE})_S{STATIC_THRESH}_M{MEDIUM_THRESH}" if ENABLE_JANO else "ori"
-# OUTPUT_DIR = f"./flux_results/jano_flux_result/{get_prompt_id(PROMPT)}"
-OUTPUT_DIR = f"../evaluation/janox_flux/{get_prompt_id(PROMPT)}"
-TAG = "jano"
-
-# Jano+X
-JANO_X = "no" # 设置为pab去启用jano_pab
-GlobalEnv.set_envs("janox", JANO_X) 
-if JANO_X == "pab":
-    from flux.pab.pab_manager import init_pab_manger
-    SELF_RANGE = 3
-    init_pab_manger(50, self_range=SELF_RANGE, warmup=WARMUP)
-    TAG = f"pab{SELF_RANGE}_{TAG}"
-    
-if JANO_X == "teacache":
-    from flux.teacache.tea_transformer import jano_teacache_forward
-    FluxTransformer2DModel.forward = jano_teacache_forward
-    THRESH = 0.3
-    TAG = f"tea{THRESH}_{TAG}"
-
+TAG = f"W_{WARMUP}_B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]})_DS({DIFFUSION_STENGTH}-{DIFFUSION_DISTANCE})_S{STATIC_THRESH}_M{MEDIUM_THRESH}" if ENABLE_JANO else "ori"
+OUTPUT_DIR = f"./flux_results/jano_flux_result/{get_prompt_id(PROMPT)}"
 save_dir = OUTPUT_DIR
 num_inference_steps = 50
 
@@ -75,15 +57,6 @@ prompt = PROMPT
 pipe = FluxPipeline.from_pretrained(MODEL_PATH, torch_dtype=torch.bfloat16)
 pipe.transformer = FluxTransformer2DModel.from_pretrained(f"{MODEL_PATH}/transformer", torch_dtype=torch.bfloat16)
 # pipe.enable_model_cpu_offload() #save some VRAM by offloading the model to CPU. Remove this if you have enough GPU power
-if JANO_X == "teacache":
-     # TeaCache
-    pipe.transformer.__class__.enable_teacache = True
-    pipe.transformer.__class__.cnt = 0
-    pipe.transformer.__class__.num_steps = num_inference_steps
-    pipe.transformer.__class__.rel_l1_thresh = THRESH # 0.25 for 1.5x speedup, 0.4 for 1.8x speedup, 0.6 for 2.0x speedup, 0.8 for 2.25x speedup
-    pipe.transformer.__class__.accumulated_rel_l1_distance = 0
-    pipe.transformer.__class__.previous_modulated_input = None
-    pipe.transformer.__class__.previous_residual = None
 
 
 

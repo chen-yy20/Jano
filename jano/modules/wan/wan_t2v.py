@@ -34,8 +34,6 @@ from jano.modules.wan.models import WanModel
 from jano.dist.parallel_state import get_cp_group, get_cp_worldsize
 from utils.envs import GlobalEnv
 
-from wan.jano_baselines.pab_manager import get_pab_manager
-
 class WanT2V_jano:
 
     def __init__(
@@ -257,18 +255,11 @@ class WanT2V_jano:
             enable_jano = GlobalEnv.get_envs('enable_stdit')
             warmup_steps = GlobalEnv.get_envs('warmup_steps')
             
-            use_jano_pab = False
-            if GlobalEnv.get_envs("janox") == "pab":
-                pab_manager = get_pab_manager()
-                use_jano_pab = True
-            
             with get_timer("generate_e2e"):
                 for step, t in enumerate(tqdm(timesteps)):
                     latent_model_input = latents    
                     timestep = [t]
                     update_timestep(step)
-                    if use_jano_pab:
-                        pab_manager.check_calc(step)
                     
                     timestep = torch.stack(timestep)
                     
@@ -311,7 +302,6 @@ class WanT2V_jano:
                         analyze_result = analyzer.step(noise_pred)
                         if analyze_result is not None:
                             mask_manager.generate_mask(analyze_result)
-                            # exit()
                 
                     temp_x0 = sample_scheduler.step(
                         noise_pred.unsqueeze(0),

@@ -2,46 +2,9 @@ import torch
 import numpy as np
 
 from jano.block_manager import get_block_manager
-from jano.stuff import get_timestep, visualize_mask
+from jano.stuff import get_timestep, visualize_mask, print_kv_memory_usage
 from utils.envs import GlobalEnv
 from utils.timer import get_timer
-
-def create_random_latents_mask(x: torch.Tensor, ratio: float = 0.5, device=None):
-    """
-    创建空间随机mask，只对F、H、W三维进行随机采样
-    
-    Args:
-        x: 输入张量 [C, F, H, W]
-        ratio: 采样比例，表示被mask的比例
-        device: torch设备，默认None表示使用CPU
-    Returns:
-        mask: bool张量 [C, F, H, W]
-    """
-    C, F, H, W = x.shape
-    # 初始化全False的mask
-    mask = torch.ones((C, F, H, W), dtype=torch.bool, device=device)
-    
-    # 计算F*H*W的总数
-    total_points = F * H * W
-    num_masked = int(total_points * ratio)
-    
-    # 对每个通道进行相同的随机mask
-    indices = torch.randperm(total_points, device=device)[:num_masked]
-    
-    # 将一维索引转换为三维索引
-    f_idx = (indices // (H * W)) % F
-    h_idx = (indices // W) % H
-    w_idx = indices % W
-    
-    # 对所有通道应用相同的mask
-    for c in range(C):
-        mask[c, f_idx, h_idx, w_idx] = False  # False 表示mask，不进行计算
-        
-    return mask
-
-def format_memory(bytes):
-    """将字节数转换为可读格式（GB）"""
-    return f"{bytes / 1024**3:.2f}GB"
 
 class MaskManager:
     def __init__(self, seq_len: int, num_inference_steps: int):
@@ -313,9 +276,16 @@ class MaskManager:
         if self.step_level == 3:
             # store
             img_seq = x[:, :, txt_seq_len:, :]  # [B,H,img_S,D]
-            self.static_cache[state_key] = img_seq[:, :, self.static_bool_mask, :]
-            self.medium_cache[state_key] = img_seq[:, :, self.medium_bool_mask, :]
+            static_seq = img_seq[:, :, self.static_bool_mask, :]
+            medium_seq = img_seq[:, :, self.medium_bool_mask, :]
+            self.static_cache[state_key] = static_seq
+            self.medium_cache[state_key] = medium_seq
             result = x
+            
+            step = get_timestep()
+            if step - self.warmup_steps-1 == 0:
+                print_kv_memory_usage(state_key, static_seq, medium_seq)
+
                 
         elif self.step_level == 2:
             # 分离文本和图像序列
@@ -342,17 +312,6 @@ class MaskManager:
         self.medium_cache.clear()
         torch.cuda.reset_peak_memory_stats()
         self.max_memory = 0
-    
-    def print_memory_stats(self):
-        """打印当前GPU内存使用情况"""
-        current_memory = torch.cuda.memory_allocated()
-        max_memory = torch.cuda.max_memory_allocated()
-        self.max_memory = max(self.max_memory, current_memory)
-        
-        print(f"step {get_timestep()} | GPU Memory Stats:")
-        print(f"  Current Memory: {format_memory(current_memory)}")
-        print(f"  Peak Memory: {format_memory(max_memory)}")
-        print(f"  Session Peak Memory: {format_memory(self.max_memory)}", flush=True)
 
 # ================================ APIs =================================
         

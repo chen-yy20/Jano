@@ -168,11 +168,6 @@ class WanSelfAttention_jano(nn.Module):
         self.qk_norm = qk_norm
         self.eps = eps
         self.layer_idx = layer_idx
-        
-        self.jano_pab = False
-        if GlobalEnv.get_envs("janox") == "pab":
-            self.jano_pab = True
-            self.pab_manager = get_pab_manager()
             
         self.cache_x = GlobalEnv.get_envs("memory_efficient_cache")     
 
@@ -193,14 +188,6 @@ class WanSelfAttention_jano(nn.Module):
             freqs(Tensor): Rope freqs, shape [1024, C / num_heads / 2]
         """
         mm = get_mask_manager()
-        if self.jano_pab:
-            cfg = GlobalEnv.get_envs("cond")
-            name = f"{cfg}-{self.layer_idx}"
-            if not self.pab_manager.self_calc: 
-                if mm is None or mm.step_level == 1: # 可以跳过计算
-                    if self.layer_idx == 0:
-                        print(f"{get_timestep()} | Self attn: SKIP.", flush=True)
-                    return self.pab_manager.self_attn_cache[name]
 
         b, s, n, d = *x.shape[:2], self.num_heads, self.head_dim
 
@@ -238,20 +225,5 @@ class WanSelfAttention_jano(nn.Module):
         # output
         x = x.flatten(2)
         x = self.o(x)
-        
-        if self.jano_pab and self.pab_manager.should_store:
-            if mm is None:
-                store_output = x
-            elif mm.step_level == 3:
-                store_output = x[:, mm.active_bool_mask, ...]
-            elif mm.step_level == 2:
-                store_output = x[:, mm.active_bool_mask_in_l2, ...]
-            else:
-                store_output = x
-                
-            self.pab_manager.self_attn_cache[name] = store_output
-            
-            if self.layer_idx == 0:
-                print(f"{get_timestep()} | Stored {store_output.shape=}.", flush=True)
         
         return x

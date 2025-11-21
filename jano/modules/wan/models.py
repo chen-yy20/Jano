@@ -15,8 +15,6 @@ from jano.mask_manager.wan_mask_manager import get_mask_manager
 from jano.modules.wan.attention_processor import WanSelfAttention_jano
 from jano.stuff import get_timestep, get_masked_timer, print_gpu_memory
 
-from wan.jano_baselines.pab_manager import get_pab_manager
-
 __all__ = ['WanModel']
 
 T5_CONTEXT_TOKEN_NUMBER = 512
@@ -128,11 +126,6 @@ class WanSelfAttention(nn.Module):
         self.qk_norm = qk_norm
         self.eps = eps
         self.layer_idx = layer_idx
-        
-        self.jano_pab = False
-        if GlobalEnv.get_envs("janox") == "pab":
-            self.jano_pab = True
-            self.pab_manager = get_pab_manager()
 
         # layers
         self.q = nn.Linear(dim, dim)

@@ -428,3 +428,17 @@ def visualize_mask(mask: torch.Tensor):
     plt.close()
     
     print(f"Mask visualization saved to {save_path}")
+    
+    
+def print_kv_memory_usage(state_key: str, static_seq: torch.Tensor, medium_seq: torch.Tensor):
+    # 计算张量占用的内存
+    static_mem = static_seq.element_size() * static_seq.nelement() / (1024 * 1024)  # MB
+    medium_mem = medium_seq.element_size() * medium_seq.nelement() / (1024 * 1024)  # MB
+    
+    # 获取PyTorch分配的总内存
+    total_mem = torch.cuda.memory_allocated() / (1024 * 1024) if torch.cuda.is_available() else 0  # MB
+    
+    print(f"Stored {state_key}, "
+        f"{static_seq.shape=} (mem: {static_mem:.2f}MB) "
+        f"{medium_seq.shape=} (mem: {medium_mem:.2f}MB) "
+        f"Current CUDA memory: {total_mem:.2f}MB", flush=True)

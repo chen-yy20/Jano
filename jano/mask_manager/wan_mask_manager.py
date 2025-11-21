@@ -210,9 +210,6 @@ class MaskManager:
         2: 中等动态区域 (static_thresh ~ medium_thresh)
         3: 高动态区域 (> medium_thresh)
         """
-        combined_score = torch.from_numpy(combined_score)
-        print_score_stats(combined_score)
-        # exit()
         static_thresh = GlobalEnv.get_envs("static_thresh")
         medium_thresh = GlobalEnv.get_envs("medium_thresh")
         
@@ -396,53 +393,50 @@ class MaskManager:
         B, S, N, D = kv.shape
         x = kv.reshape(B, S, -1)
         
-        if self.step_level == 3:     
-            with get_timer("3_kv"):       
-                static_data = x[:, self.static_bool_mask, :]
-                medium_data = x[:, self.medium_bool_mask, :]
-                
-                if self.offload_kv:
-                    self.static_cache[state_key] = static_data.cpu()
-                    self.medium_cache[state_key] = medium_data.cpu()
-                else:
-                    self.static_cache[state_key] = static_data
-                    self.medium_cache[state_key] = medium_data
-                if get_timestep() == GlobalEnv.get_envs("warmup_steps") + 1:
-                    print(f"Stored {state_key}, {x.shape=}, "
-                        f"tensor_MiB={x.element_size() * x.nelement() >> 20}, " # >>20，右移20位，Byte转换为MB
-                        f"cuda_reserved_MiB={torch.cuda.memory_reserved() >> 20}, "
-                        f"cuda_allocated_MiB={torch.cuda.memory_allocated() >> 20}", flush=True)
-                result = x
+        if self.step_level == 3:           
+            static_data = x[:, self.static_bool_mask, :]
+            medium_data = x[:, self.medium_bool_mask, :]
+            
+            if self.offload_kv:
+                self.static_cache[state_key] = static_data.cpu()
+                self.medium_cache[state_key] = medium_data.cpu()
+            else:
+                self.static_cache[state_key] = static_data
+                self.medium_cache[state_key] = medium_data
+            if get_timestep() == GlobalEnv.get_envs("warmup_steps") + 1:
+                print(f"Stored {state_key}, {x.shape=}, "
+                    f"tensor_MiB={x.element_size() * x.nelement() >> 20}, " # >>20，右移20位，Byte转换为MB
+                    f"cuda_reserved_MiB={torch.cuda.memory_reserved() >> 20}, "
+                    f"cuda_allocated_MiB={torch.cuda.memory_allocated() >> 20}", flush=True)
+            result = x
         elif self.step_level == 2:
-            with get_timer("2_kv"):
-                # 存储
-                medium_data = x[:, self.medium_bool_mask_in_l2, :]
-                if self.offload_kv:
-                    self.medium_cache[state_key] = medium_data.cpu()
-                else:
-                    self.medium_cache[state_key] = medium_data
-                    
-                # 恢复（从CPU转回GPU如果需要）
-                static_kv = self.static_cache[state_key]
-                if self.offload_kv:
-                    static_kv = static_kv.cuda()
-                    
-                if layer_idx == 20:
-                    print(f"{get_timestep()} | Fetch from {state_key}, {static_kv.shape=}", flush=True)
-                result = torch.cat([x, static_kv], dim=1)
-        elif self.step_level == 1:
-            with get_timer("1_kv"):
-                # 恢复（从CPU转回GPU如果需要）
-                medium_kv = self.medium_cache[state_key]
-                static_kv = self.static_cache[state_key]
+            # 存储
+            medium_data = x[:, self.medium_bool_mask_in_l2, :]
+            if self.offload_kv:
+                self.medium_cache[state_key] = medium_data.cpu()
+            else:
+                self.medium_cache[state_key] = medium_data
                 
-                if self.offload_kv:
-                    medium_kv = medium_kv.cuda()
-                    static_kv = static_kv.cuda()
-                    
-                if layer_idx == 20:
-                    print(f"{get_timestep()} | Fetch from {state_key}, {static_kv.shape=} {medium_kv.shape=}", flush=True)
-                result = torch.cat([x, medium_kv, static_kv], dim=1)
+            # 恢复（从CPU转回GPU如果需要）
+            static_kv = self.static_cache[state_key]
+            if self.offload_kv:
+                static_kv = static_kv.cuda()
+                
+            if layer_idx == 20:
+                print(f"{get_timestep()} | Fetch from {state_key}, {static_kv.shape=}", flush=True)
+            result = torch.cat([x, static_kv], dim=1)
+        elif self.step_level == 1:
+            # 恢复（从CPU转回GPU如果需要）
+            medium_kv = self.medium_cache[state_key]
+            static_kv = self.static_cache[state_key]
+            
+            if self.offload_kv:
+                medium_kv = medium_kv.cuda()
+                static_kv = static_kv.cuda()
+                
+            if layer_idx == 20:
+                print(f"{get_timestep()} | Fetch from {state_key}, {static_kv.shape=} {medium_kv.shape=}", flush=True)
+            result = torch.cat([x, medium_kv, static_kv], dim=1)
             
         return result.reshape(B, -1, N, D)
     

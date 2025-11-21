@@ -6,6 +6,7 @@ wan_bckup
 *.txt
 *.pyc
 *.pt
+*.npz
 note.md
 evaluation
 __pycache__
