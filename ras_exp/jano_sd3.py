@@ -18,7 +18,7 @@ from utils.quality_metric import evaluate_quality_with_origin
 
 HEIGHT = 1024
 WIDTH = 1024
-MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/sd3"
+MODEL_PATH = os.getenv("MODEL_PATH", "./stable-diffusion-3")
 PROMPT = "A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background."
 
 

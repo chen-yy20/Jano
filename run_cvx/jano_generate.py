@@ -43,7 +43,7 @@ from utils.quality_metric import evaluate_quality_with_origin
 
 PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
  
-MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/cogvideox1.5-5b"
+MODEL_PATH = os.getenv("MODEL_PATH", "./cogvideox1.5-5b")
 T_WEIGHT = 0.6
 DIFFUSION_STENGTH = 0.8
 DIFFUSION_DISTANCE = 2

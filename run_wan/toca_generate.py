@@ -31,7 +31,7 @@ time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
 
 init_timer()
 PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
-MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Wan2.1-T2V-1.3B" # 1.3B / 14B
+MODEL_PATH = os.getenv("MODEL_PATH", "./Wan2.1-T2V-1.3B")  # 1.3B / 14B
 
 ENABLE_TOCA = 1
 

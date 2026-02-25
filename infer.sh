@@ -15,4 +15,4 @@ SCRIPT="./run_wan/jano_generate.py"
 ARGS=""
 EXTRA_ARGS=""
 
-exec python $SCRIPT $ARGS $EXTRA_ARGSdui
+exec python $SCRIPT $ARGS $EXTRA_ARGS

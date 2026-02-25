@@ -20,7 +20,7 @@ from jano.stuff import get_prompt_id
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
-MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Flux-1"
+MODEL_PATH = os.getenv("MODEL_PATH", "./Flux-1")
 PROMPT = "A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background."
 # Teacache 关键参数 
 # # 0.25 for 1.5x speedup, 0.4 for 1.8x speedup, 0.6 for 2.0x speedup, 0.8 for 2.25x speedup

@@ -9,7 +9,7 @@ from utils.timer import init_timer, get_timer, print_time_statistics, save_time_
 from utils.quality_metric import evaluate_quality_with_origin
 from jano.stuff import get_prompt_id
 
-MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Flux-1"
+MODEL_PATH = os.getenv("MODEL_PATH", "./Flux-1")
 PROMPT = "A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background."
 ENABLE_TOCA = 0
 TAG = f"toca" if ENABLE_TOCA else "ori"
