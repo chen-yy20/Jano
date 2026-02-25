@@ -48,7 +48,7 @@ PROMPT = "Hare in snow."
 # 强加速
 # PROMPT = "A simple white pendulum swinging back and forth against a plain black background. The pendulum moves in a clear, rhythmic motion, creating a hypnotic pattern through time while maintaining minimal spatial complexity."
 
-MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Wan2.1-T2V-14B" # 1.3B / 14B
+MODEL_PATH = os.getenv("MODEL_PATH", "./Wan2.1-T2V-14B")  # 1.3B / 14B
 
 T_WEIGHT = 0.7
 DIFFUSION_STENGTH = 0.8

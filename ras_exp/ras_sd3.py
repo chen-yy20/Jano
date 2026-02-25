@@ -1,12 +1,15 @@
 import argparse
+import os
 import torch
 from diffusers import StableDiffusion3Pipeline
 from ras.utils.stable_diffusion_3.update_pipeline_sd3 import update_sd3_pipeline
 from ras.utils import ras_manager
 from ras.utils.ras_argparser import parse_args
 
+MODEL_PATH = os.getenv("MODEL_PATH", "./stable-diffusion-3")
+
 def sd3_inf(args):
-    pipeline = StableDiffusion3Pipeline.from_pretrained("/home/fit/zhaijdcyy/WORK/models/sd3", torch_dtype=torch.float16, use_auth_token=True)
+    pipeline = StableDiffusion3Pipeline.from_pretrained(MODEL_PATH, torch_dtype=torch.float16, use_auth_token=True)
     pipeline.to("cuda")
     pipeline = update_sd3_pipeline(pipeline)
     generator = torch.Generator("cuda").manual_seed(args.seed) if args.seed is not None else None
