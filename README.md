@@ -1,4 +1,4 @@
-# Jano
+# Jano: Adaptive Diffusion Generation with Early-stage Convergence Awareness
 
 **Jano** is an inference acceleration framework for diffusion-based video/image generation models. It profiles the spatio-temporal dynamics of the latent space during a short warm-up phase and then selectively skips computations for low-dynamic regions, achieving significant speedup with minimal quality degradation.
 
