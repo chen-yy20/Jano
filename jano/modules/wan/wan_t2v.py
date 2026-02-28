@@ -218,7 +218,8 @@ class WanT2V_jano:
             mask_manager = init_mask_manager(patch_size=(1,2,2),
                             seq_len = 32760 if GlobalEnv.get_envs('model') == '1.3B' else 75600,
                             num_inference_steps=GlobalEnv.get_envs('num_inference_steps'),
-                            layer_num=30 if GlobalEnv.get_envs('model') == '1.3B' else 40)
+                            layer_num=30 if GlobalEnv.get_envs('model') == '1.3B' else 40,
+                            offload=GlobalEnv.get_envs('offload'))
         
         no_sync = getattr(self.model, 'no_sync', noop_no_sync)
 

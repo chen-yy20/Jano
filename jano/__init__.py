@@ -20,6 +20,8 @@ def init_jano(
         static_interval = 10,
         medium_thresh = 0.3,
         medium_interval = 5,
+        # offload
+        offload = False,
     ):
     """
     初始化STDIT参数和全局环境
@@ -52,6 +54,7 @@ def init_jano(
         'static_interval' : static_interval,
         'medium_thresh' : medium_thresh,
         'medium_interval' : medium_interval,
+        'offload': offload,
     }
     
     for key, value in params.items():
