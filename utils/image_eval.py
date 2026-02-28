@@ -61,13 +61,13 @@ def evaluate_images(origin_dir, speed_up_dir, output_file="evaluation_results.js
     common_files = sorted(origin_files & speed_up_files)
 
     if not common_files:
-        print(f"警告: 在 {origin_dir} 和 {speed_up_dir} 中没有找到相同的图片文件")
+        print(f"Warning: no matching PNG files found between {origin_dir} and {speed_up_dir}")
         return
 
-    print(f"找到 {len(common_files)} 对匹配的图片")
+    print(f"Found {len(common_files)} matched image pairs")
 
     results, psnr_values, ssim_values = [], [], []
-    for filename in tqdm(common_files, desc="处理图片"):
+    for filename in tqdm(common_files, desc="Processing images"):
         origin_path = os.path.join(origin_dir, filename)
         speed_up_path = os.path.join(speed_up_dir, filename)
         try:
@@ -79,7 +79,7 @@ def evaluate_images(origin_dir, speed_up_dir, output_file="evaluation_results.js
             psnr_values.append(psnr)
             ssim_values.append(ssim)
         except Exception as e:
-            print(f"处理 {filename} 时出错: {str(e)}")
+            print(f"Failed to process {filename}: {str(e)}")
 
     if not results:
         return
@@ -96,20 +96,22 @@ def evaluate_images(origin_dir, speed_up_dir, output_file="evaluation_results.js
         json.dump(summary, f, indent=2, ensure_ascii=False)
 
     print("\n" + "=" * 60)
-    print("评估结果统计:")
+    print("Evaluation summary:")
     print("=" * 60)
-    print(f"总图片数: {len(results)}")
-    print(f"\nPSNR: 平均值={summary['psnr_mean']:.4f}, 标准差={summary['psnr_std']:.4f}")
-    print(f"SSIM: 平均值={summary['ssim_mean']:.4f}, 标准差={summary['ssim_std']:.4f}")
+    print(f"Total images: {len(results)}")
+    print(f"\nPSNR: mean={summary['psnr_mean']:.4f}, std={summary['psnr_std']:.4f}")
+    print(f"SSIM: mean={summary['ssim_mean']:.4f}, std={summary['ssim_std']:.4f}")
     print("=" * 60)
-    print(f"\n详细结果已保存到: {os.path.abspath(output_file)}")
+    print(f"\nDetailed results saved to: {os.path.abspath(output_file)}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="计算两个文件夹中图片的 PSNR 和 SSIM")
-    parser.add_argument("--origin", type=str, required=True, help="原始图片文件夹路径")
-    parser.add_argument("--speed_up", type=str, required=True, help="加速后图片文件夹路径")
-    parser.add_argument("--output", type=str, default="evaluation_results.json", help="输出结果文件名")
+    parser = argparse.ArgumentParser(
+        description="Compute PSNR/SSIM for images with matching names in two folders"
+    )
+    parser.add_argument("--origin", type=str, required=True, help="Path to original image folder")
+    parser.add_argument("--speed_up", type=str, required=True, help="Path to accelerated image folder")
+    parser.add_argument("--output", type=str, default="evaluation_results.json", help="Output JSON file")
     args = parser.parse_args()
     evaluate_images(args.origin, args.speed_up, args.output)
 

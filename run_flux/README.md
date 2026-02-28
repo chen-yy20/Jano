@@ -1,18 +1,17 @@
 # run_flux
 
-FLUX 推理脚本目录（Jano + baseline）：
+FLUX inference scripts (Jano + baselines):
 
 - `generate_flux_jano.py`
 - `generate_flux_pab.py`
 - `generate_flux_teacache.py`
 - `generate_flux_toca.py`
 
-评估工具已统一为共享实现，入口保留在 `flux_evaluate/evaluate.py`。
+The evaluation implementation is shared in `utils/image_eval.py`, with a compatibility entrypoint kept at `flux_evaluate/evaluate.py`.
 
-推荐统一入口（仓库根目录）：
+Recommended unified entrypoint (from repository root):
 
 ```bash
 python launch.py --model flux --method jano
 python launch.py --model flux --method teacache
 ```
-

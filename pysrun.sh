@@ -9,6 +9,11 @@ if [ -z "$SCRIPT" ]; then
     exit 1
 fi
 
+if [ ! -f infer.sh ]; then
+    echo "infer.sh not found in current directory: $(pwd)"
+    exit 1
+fi
+
 srun \
     -p "${PARTITION:-debug}" \
     -K \

@@ -33,7 +33,7 @@ def build_parser():
     parser.add_argument("--partition", default="debug", help="SLURM partition for srun")
     parser.add_argument("--nnodes", type=int, default=1, help="Number of nodes for srun")
     parser.add_argument("--gpus-per-node", type=int, default=1, help="GPUs per node for srun")
-    parser.add_argument("--job-name", default="jano", help="SLURM job name for srun")
+    parser.add_argument("--job-name", default="jano-run", help="SLURM job name for srun")
     parser.add_argument("script_args", nargs=argparse.REMAINDER, help="Extra args passed to target script")
     return parser
 
@@ -56,8 +56,12 @@ def main():
         script_args = script_args[1:]
 
     script = resolve_script(args.model, args.method, args.script)
+    repo_root = os.path.dirname(os.path.abspath(__file__))
     env = os.environ.copy()
-    env.setdefault("PYTHONPATH", f"{os.getcwd()}:{env.get('PYTHONPATH', '')}")
+    if env.get("PYTHONPATH") and env["PYTHONPATH"].strip():
+        env["PYTHONPATH"] = os.pathsep.join([repo_root, env["PYTHONPATH"]])
+    else:
+        env["PYTHONPATH"] = repo_root
 
     if args.launcher == "python":
         cmd = [sys.executable, script, *script_args]
