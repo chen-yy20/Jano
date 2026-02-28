@@ -3,10 +3,11 @@ import os
 import matplotlib.pyplot as plt
 import seaborn as sns
 from dataclasses import dataclass
-from typing import Dict, Tuple, Optional
+from typing import Dict, List, Tuple, Optional
 
 from jano.block_manager import get_block_manager
 from jano.stuff import get_timestep, visualize_mask
+from jano.offload_manager import OffloadManager
 from utils.envs import GlobalEnv
 from utils.timer import get_timer
         
@@ -77,14 +78,14 @@ def print_score_stats(tensor: torch.Tensor):
 
 class MaskManager:
     # 维护latent mask 和 sequence mask，提供apply mask和restore kv等接口
-    def __init__(self, patch_size: tuple, seq_len: int, num_inference_steps: int, layer_nums: int):
+    def __init__(self, patch_size: tuple, seq_len: int, num_inference_steps: int, layer_nums: int,
+                 offload_manager: Optional[OffloadManager] = None):
         self.patch_size = patch_size
         self.warmup_steps = GlobalEnv.get_envs("warmup_steps")
         self.cooldown_steps = GlobalEnv.get_envs("cooldown_steps")
         self.static_interval = GlobalEnv.get_envs("static_interval")
         self.medium_interval = GlobalEnv.get_envs("medium_interval")
         
-        # self.offload = GlobalEnv.get_envs("offload")
         self.enable = GlobalEnv.get_envs("enable_stdit")
         
         self.num_inference_steps = num_inference_steps
@@ -113,24 +114,19 @@ class MaskManager:
         # 记录最大内存使用
         self.max_memory = 0
         self.offload_kv = False
-        
-        # offload下的双流流水线实现【暂时停用】
-        # if self.offload:
-        #     print("Initializing MaskManager with dual-stream pipeline support.")
-        #     self.frozen_states_cpu = {}
-        #     # 用于记录第一次tensor的shape和dtype
-        #     self.buffer_initialized = False
-        #      # 1. 创建计算流和数据流
-        #     self.compute_stream = torch.cuda.Stream()
-        #     self.data_stream = torch.cuda.Stream()
-            
-        
-        #     # Pinned Memory (CPU端) 和 GPU (设备端) 缓冲区
-        #     self.pinned_buffers = {}
-        #     self.gpu_staging_buffer = None
-            
-        #     # 同步事件
-        #     self.prefetch_event = torch.cuda.Event()
+
+        # Dual-stream pipeline offload manager (optional)
+        # When set, cached KV/x tensors are stored in CPU pinned memory and
+        # prefetched back to GPU just-in-time using a dedicated data_stream,
+        # overlapping transfers with GPU compute.
+        self.offload_manager: Optional[OffloadManager] = offload_manager
+        if offload_manager is not None:
+            self.offload_kv = True
+            print(
+                "[MaskManager] Dual-stream offload pipeline enabled "
+                f"({layer_nums} layers).",
+                flush=True,
+            )
         
     # def generate_ratio_mask(self, combined_score):
     #     """
@@ -397,7 +393,11 @@ class MaskManager:
             static_data = x[:, self.static_bool_mask, :]
             medium_data = x[:, self.medium_bool_mask, :]
             
-            if self.offload_kv:
+            if self.offload_manager is not None:
+                # Async D2H copy to CPU pinned memory (dual-stream pipeline)
+                self.offload_manager.store_async(static_data, f"s_kv_{state_key}")
+                self.offload_manager.store_async(medium_data, f"m_kv_{state_key}")
+            elif self.offload_kv:
                 self.static_cache[state_key] = static_data.cpu()
                 self.medium_cache[state_key] = medium_data.cpu()
             else:
@@ -412,27 +412,42 @@ class MaskManager:
         elif self.step_level == 2:
             # 存储
             medium_data = x[:, self.medium_bool_mask_in_l2, :]
-            if self.offload_kv:
+            if self.offload_manager is not None:
+                self.offload_manager.store_async(medium_data, f"m_kv_{state_key}")
+            elif self.offload_kv:
                 self.medium_cache[state_key] = medium_data.cpu()
             else:
                 self.medium_cache[state_key] = medium_data
                 
-            # 恢复（从CPU转回GPU如果需要）
-            static_kv = self.static_cache[state_key]
-            if self.offload_kv:
-                static_kv = static_kv.cuda()
+            # 恢复（从CPU转回GPU，使用双流流水线或naive方式）
+            if self.offload_manager is not None:
+                static_kv = self.offload_manager.fetch(f"s_kv_{state_key}")
+                if static_kv is None:
+                    raise RuntimeError(f"[OffloadManager] Cache miss for key s_kv_{state_key}")
+            elif self.offload_kv:
+                static_kv = self.static_cache[state_key].cuda()
+            else:
+                static_kv = self.static_cache[state_key]
                 
             if layer_idx == 20:
                 print(f"{get_timestep()} | Fetch from {state_key}, {static_kv.shape=}", flush=True)
             result = torch.cat([x, static_kv], dim=1)
         elif self.step_level == 1:
-            # 恢复（从CPU转回GPU如果需要）
-            medium_kv = self.medium_cache[state_key]
-            static_kv = self.static_cache[state_key]
-            
-            if self.offload_kv:
-                medium_kv = medium_kv.cuda()
-                static_kv = static_kv.cuda()
+            # 恢复（从CPU转回GPU，使用双流流水线或naive方式）
+            if self.offload_manager is not None:
+                medium_kv = self.offload_manager.fetch(f"m_kv_{state_key}")
+                static_kv = self.offload_manager.fetch(f"s_kv_{state_key}")
+                if medium_kv is None or static_kv is None:
+                    raise RuntimeError(
+                        f"[OffloadManager] Cache miss for keys "
+                        f"m_kv_{state_key} or s_kv_{state_key}"
+                    )
+            elif self.offload_kv:
+                medium_kv = self.medium_cache[state_key].cuda()
+                static_kv = self.static_cache[state_key].cuda()
+            else:
+                medium_kv = self.medium_cache[state_key]
+                static_kv = self.static_cache[state_key]
                 
             if layer_idx == 20:
                 print(f"{get_timestep()} | Fetch from {state_key}, {static_kv.shape=} {medium_kv.shape=}", flush=True)
@@ -448,11 +463,13 @@ class MaskManager:
         B, S, D = x.shape
         
         if self.step_level == 3:     
-            # with get_timer("3_x"):       
             static_data = x[:, self.static_bool_mask, :]
             medium_data = x[:, self.medium_bool_mask, :]
             
-            if self.offload_kv:
+            if self.offload_manager is not None:
+                self.offload_manager.store_async(static_data, f"s_x_{state_key}")
+                self.offload_manager.store_async(medium_data, f"m_x_{state_key}")
+            elif self.offload_kv:
                 self.static_cache[state_key] = static_data.cpu()
                 self.medium_cache[state_key] = medium_data.cpu()
             else:
@@ -465,31 +482,44 @@ class MaskManager:
                     f"cuda_allocated_MiB={torch.cuda.memory_allocated() >> 20}", flush=True)
             result = x
         elif self.step_level == 2:
-            # with get_timer("2_x"):
             # 存储
             medium_data = x[:, self.medium_bool_mask_in_l2, :]
-            if self.offload_kv:
+            if self.offload_manager is not None:
+                self.offload_manager.store_async(medium_data, f"m_x_{state_key}")
+            elif self.offload_kv:
                 self.medium_cache[state_key] = medium_data.cpu()
             else:
                 self.medium_cache[state_key] = medium_data
                 
-            # 恢复（从CPU转回GPU如果需要）
-            static_kv = self.static_cache[state_key]
-            if self.offload_kv:
-                static_kv = static_kv.cuda()
+            # 恢复
+            if self.offload_manager is not None:
+                static_kv = self.offload_manager.fetch(f"s_x_{state_key}")
+                if static_kv is None:
+                    raise RuntimeError(f"[OffloadManager] Cache miss for key s_x_{state_key}")
+            elif self.offload_kv:
+                static_kv = self.static_cache[state_key].cuda()
+            else:
+                static_kv = self.static_cache[state_key]
                 
             if layer_idx == 20:
                 print(f"{get_timestep()} | Fetch from {state_key}, {static_kv.shape=}", flush=True)
             result = torch.cat([x, static_kv], dim=1)
         elif self.step_level == 1:
-            # with get_timer("1_x"):
-            # 恢复（从CPU转回GPU如果需要）
-            medium_kv = self.medium_cache[state_key]
-            static_kv = self.static_cache[state_key]
-            
-            if self.offload_kv:
-                medium_kv = medium_kv.cuda()
-                static_kv = static_kv.cuda()
+            # 恢复
+            if self.offload_manager is not None:
+                medium_kv = self.offload_manager.fetch(f"m_x_{state_key}")
+                static_kv = self.offload_manager.fetch(f"s_x_{state_key}")
+                if medium_kv is None or static_kv is None:
+                    raise RuntimeError(
+                        f"[OffloadManager] Cache miss for keys "
+                        f"m_x_{state_key} or s_x_{state_key}"
+                    )
+            elif self.offload_kv:
+                medium_kv = self.medium_cache[state_key].cuda()
+                static_kv = self.static_cache[state_key].cuda()
+            else:
+                medium_kv = self.medium_cache[state_key]
+                static_kv = self.static_cache[state_key]
                 
             if layer_idx == 20:
                 print(f"{get_timestep()} | Fetch from {state_key}, {static_kv.shape=} {medium_kv.shape=}", flush=True)
@@ -501,6 +531,8 @@ class MaskManager:
         """清理frozen状态并重置内存统计"""
         self.static_cache.clear()
         self.medium_cache.clear()
+        if self.offload_manager is not None:
+            self.offload_manager.clear()
         torch.cuda.reset_peak_memory_stats()
         self.max_memory = 0
     
@@ -512,6 +544,19 @@ class MaskManager:
         elif self.step_level == 1:
             return self.active_seqlen
         
+    def _get_prefetch_keys(self, cond: str) -> List[str]:
+        """Return offload-manager keys that need to be prefetched for the current step_level."""
+        keys: List[str] = []
+        for i in range(self.num_layers):
+            state_key = f"{cond}_{i}"
+            if self.step_level in (1, 2):
+                keys.append(f"s_kv_{state_key}")
+                keys.append(f"s_x_{state_key}")
+            if self.step_level == 1:
+                keys.append(f"m_kv_{state_key}")
+                keys.append(f"m_x_{state_key}")
+        return keys
+
     def update_step_level(self):
         timestep = get_timestep()
         if timestep is None or timestep <= self.warmup_steps \
@@ -524,6 +569,21 @@ class MaskManager:
             self.step_level = 2 # medium compute
         else: 
             self.step_level = 1 # active compute
+
+        # Issue all CPU→GPU prefetches at the start of a fetch step so that
+        # the DMA engine can overlap transfers with GPU compute.
+        if self.offload_manager is not None and self.step_level in (1, 2):
+            try:
+                cond = str(GlobalEnv.get_envs("cond"))
+            except KeyError:
+                cond = "0"
+                print(
+                    "[MaskManager] Warning: 'cond' not found in GlobalEnv; "
+                    "defaulting to '0' for prefetch key generation.",
+                    flush=True,
+                )
+            keys = self._get_prefetch_keys(cond)
+            self.offload_manager.begin_fetch_step(keys)
         
     
     def print_memory_stats(self):
@@ -537,91 +597,34 @@ class MaskManager:
         print(f"  Peak Memory: {format_memory(max_memory)}")
         print(f"  Session Peak Memory: {format_memory(self.max_memory)}", flush=True)
         
-    #  ============================== Offload Codes ==============================
-    # def _init_all_buffers(self, tensor: torch.Tensor):
-    #     """初始化所有层的pinned buffers"""
-    #     if not self.buffer_initialized and self.offload:
-    #         print(f"Initializing pinned buffers for {self.num_layers} layers...", flush=True)
-    #         shape = tensor.shape
-    #         dtype = tensor.dtype
-            
-    #         self.gpu_staging_buffer = torch.empty(shape, dtype=dtype, device=torch.cuda.current_device())
-    #         print(f"  - GPU Staging Buffer initialized. Size: {format_memory(self.gpu_staging_buffer.nelement() * self.gpu_staging_buffer.element_size())}")
-            
-    #         # 为每一层的x1和x2分配buffer
-    #         for i in range(self.num_layers):
-    #             x1_key = f"hidden_c0_{i}"
-    #             x2_key = f"hidden_c1_{i}"
-    #             self.pinned_buffers[x1_key] = torch.empty(shape, dtype=dtype, pin_memory=True, device='cpu')
-    #             self.pinned_buffers[x2_key] = torch.empty(shape, dtype=dtype, pin_memory=True, device='cpu')
-            
-    #         total_size = sum(t.nelement() * t.element_size() for t in self.pinned_buffers.values())
-    #         print(f"Initialized pinned memory buffers, total size: {format_memory(total_size)}", flush=True)
-    #     self.buffer_initialized = True
-            
-    # def prefetch_to_staging_buffer(self, name: str, layer_idx: int):
-    #     """
-    #     在数据流上，将指定层的CPU数据预取到共享的GPU暂存区。
-    #     """
-    #     if not self.offload or self.is_warmup_or_cooldown_step() or self.is_update_step():
-    #         return
-
-    #     state_key = f"{name}_{layer_idx}"
-    #     if state_key not in self.pinned_buffers: return
-
-    #     with torch.cuda.stream(self.data_stream):
-    #         # 异步从CPU拷贝到共享的GPU暂存区
-    #         self.gpu_staging_buffer.copy_(self.pinned_buffers[state_key], non_blocking=True)
-    #         # 记录事件，表示预取操作已入队
-    #         self.prefetch_event.record()
-            
-    # def store_frozen_state_async(self, frozen_tensor: torch.Tensor, name: str, layer_idx: int):
-    #     """
-    #     在数据流上，将GPU上的frozen token异步写回到对应的CPU Pinned Buffer。
-    #     """
-    #     state_key = f"{name}_{layer_idx}"
-        
-    #     if not self.buffer_initialized:
-    #         self._init_all_buffers(frozen_tensor)
-
-    #     with torch.cuda.stream(self.data_stream):
-    #         if self.offload:
-    #             self.pinned_buffers[state_key].copy_(frozen_tensor, non_blocking=True)
-    #             self.frozen_states_cpu[state_key] = self.pinned_buffers[state_key]
-    #         else:
-    #             self.frozen_states_gpu[state_key] = frozen_tensor
-            
-    # def restore_from_staging_buffer(self, active_tensor: torch.Tensor, name: str, layer_idx: int) -> torch.Tensor:
-    #     """
-    #     【流水线核心】在计算流上，等待预取完成，并从暂存区恢复完整序列。
-    #     """
-    #     # 1. 让计算流等待数据流上的预取完成
-    #     if self.offload:
-    #         self.compute_stream.wait_event(self.prefetch_event)
-        
-    #     # 2. 事件完成后，数据保证在 gpu_staging_buffer 中可用
-    #     B, S_, D = active_tensor.shape
-    #     S = self.full_seq_len
-    #     device = active_tensor.device
-    #     dtype = active_tensor.dtype
-
-    #     restored_x = torch.zeros(B, S, D, device=device, dtype=dtype)
-        
-    #     # 合并 active 和 frozen (来自暂存区)
-    #     if self.offload:
-    #         frozen_tensor = self.gpu_staging_buffer
-    #     else:
-    #         frozen_tensor = self.frozen_states_gpu[f"{name}_{layer_idx}"]
-            
-    #     restored_x[:, self.sequence_mask[:S], :] = active_tensor
-    #     restored_x[:, ~self.sequence_mask[:S], :] = frozen_tensor
-        
-    #     return restored_x
-        
 # ================================ APIs =================================
         
-def init_mask_manager(patch_size, seq_len, num_inference_steps, layer_num) -> MaskManager:
-    mask_manager = MaskManager(patch_size, seq_len, num_inference_steps, layer_num)
+def init_mask_manager(patch_size, seq_len, num_inference_steps, layer_num,
+                      offload: bool = False) -> MaskManager:
+    """
+    Create and register the global WAN MaskManager.
+
+    Parameters
+    ----------
+    patch_size : tuple
+        3-D patch size (pT, pH, pW).
+    seq_len : int
+        Full sequence length.
+    num_inference_steps : int
+        Total number of denoising steps.
+    layer_num : int
+        Number of transformer layers.
+    offload : bool, optional
+        When *True*, cache entries are stored in CPU pinned memory and
+        prefetched back with a dual-stream pipeline.  Defaults to *False*.
+    """
+    offload_manager: Optional[OffloadManager] = None
+    if offload and torch.cuda.is_available():
+        from jano.offload_manager import init_offload_manager
+        offload_manager = init_offload_manager(layer_num)
+
+    mask_manager = MaskManager(patch_size, seq_len, num_inference_steps, layer_num,
+                               offload_manager=offload_manager)
     GlobalEnv.set_envs('MM', mask_manager)
     return mask_manager
     
