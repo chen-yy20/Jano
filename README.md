@@ -70,7 +70,14 @@ huggingface-cli download black-forest-labs/FLUX.1-dev --local-dir ./Flux-1
 
 ## Usage / 运行
 
-All inference scripts are in `run_wan/`, `run_flux/`, and `run_cvx/`. Key parameters can be modified directly inside each script.
+All inference scripts are in `run_wan/`, `run_flux/`, and `run_cvx/`.
+You can still run scripts directly, and now there is also a unified launcher:
+
+```bash
+python launch.py --model wan  --method jano
+python launch.py --model flux --method pab
+python launch.py --model cvx  --method jano
+```
 
 > **Note:** If you get `ModuleNotFoundError`, add the project root to your Python path first:
 > ```bash
@@ -109,8 +116,11 @@ Multi-GPU (CFG-parallel) is supported for Jano and PAB on Wan2.1.
 
 **SLURM clusters:**
 ```bash
-# Edit infer.sh to select the script, then:
-bash 2gpu_wan_run.sh
+# Recommended unified command
+python launch.py --launcher srun --model wan --method jano --gpus-per-node 2 --partition h01
+
+# Compatible legacy script
+bash 2gpu_wan_run.sh ./run_wan/jano_generate.py
 ```
 
 **Other launchers (e.g., torchrun):**  

@@ -2,13 +2,19 @@
 set -x
 
 SCRIPT=$1
+shift || true
+
+if [ -z "$SCRIPT" ]; then
+    echo "Usage: bash pysrun.sh <script.py> [script args...]"
+    exit 1
+fi
 
 srun \
-    -p 'debug' \
+    -p "${PARTITION:-debug}" \
     -K \
-    -N 1 \
-    --job-name=Jano \
-    --ntasks-per-node=1 \
-    --gres=gpu:1 \
+    -N "${NNODES:-1}" \
+    --job-name="${JOB_NAME:-Jano}" \
+    --ntasks-per-node="${GPUS_PER_NODE:-1}" \
+    --gres=gpu:"${GPUS_PER_NODE:-1}" \
     --export=ALL \
-    python $SCRIPT
+    bash infer.sh "$SCRIPT" "$@"
