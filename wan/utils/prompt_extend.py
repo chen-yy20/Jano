@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from typing import List, Optional, Union
 
+
 import dashscope
 import torch
 from PIL import Image

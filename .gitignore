@@ -4,3 +4,4 @@ wan_bckup
 *.log
 note.md
 __pycache__
+wan_results/
