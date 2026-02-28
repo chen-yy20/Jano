@@ -9,5 +9,5 @@ export MASTER_ADDR=$(srun --ntasks=1 hostname 2>&1 | tail -n1)
 
 SCRIPT=${1:-"./run_wan/jano_generate.py"}
 shift || true
-export PARTITION=${PARTITION:-h01}
+export PARTITION=${PARTITION:-debug}
 bash pysrun.sh "$SCRIPT" "$@"

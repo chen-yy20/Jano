@@ -68,21 +68,7 @@ def main():
     else:
         env.update({"NNODES": str(args.nnodes), "GPUS_PER_NODE": str(args.gpus_per_node)})
         cmd = [
-            "srun",
-            "-p",
-            args.partition,
-            "-K",
-            "-N",
-            str(args.nnodes),
-            "--job-name",
-            args.job_name,
-            "--ntasks-per-node",
-            str(args.gpus_per_node),
-            "--gres",
-            f"gpu:{args.gpus_per_node}",
-            "--export=ALL",
-            "bash",
-            "infer.sh",
+            "./pysrun.sh",
             script,
             *script_args,
         ]

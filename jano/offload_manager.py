@@ -75,13 +75,14 @@ class OffloadManager:
         # CPU pinned-memory buffers: key → 1-D/N-D cpu tensor (pin_memory=True)
         self._pinned: Dict[str, torch.Tensor] = {}
 
-        # GPU staging buffers: key → gpu tensor (same shape/dtype as pinned)
-        self._staging: Dict[str, torch.Tensor] = {}
+        # GPU staging buffer pool for reuse: (shape, dtype) → list of available buffers
+        self._staging_pool: Dict[tuple, List[torch.Tensor]] = {}
+        
+        # Currently allocated staging buffers: key → tensor
+        self._active_staging: Dict[str, torch.Tensor] = {}
 
         # Per-key CUDA events (recorded on data_stream after each H2D copy)
-        self._events: Dict[str, torch.cuda.Event] = {}
-
-        # Set of keys whose H2D prefetch has been issued but not yet consumed
+        self._events: Dict[str, torch.cuda.Event] = {}        # Set of keys whose H2D prefetch has been issued but not yet consumed
         self._prefetch_issued: set = set()
 
     # ------------------------------------------------------------------
@@ -93,17 +94,45 @@ class OffloadManager:
         existing = self._pinned.get(key)
         if existing is None or existing.shape != tensor.shape or existing.dtype != tensor.dtype:
             self._pinned[key] = torch.empty(
-                tensor.shape, dtype=tensor.dtype, pin_memory=True
+                tensor.shape, dtype=tensor.dtype, pin_memory=True, device="cpu"
             )
+
+    def _get_staging_buffer(self, key: str) -> torch.Tensor:
+        """Get a staging buffer from pool or create new one."""
+        pinned = self._pinned[key]
+        shape_dtype_key = (tuple(pinned.shape), pinned.dtype)
+        
+        # Try to reuse from pool
+        if shape_dtype_key in self._staging_pool and self._staging_pool[shape_dtype_key]:
+            buffer = self._staging_pool[shape_dtype_key].pop()
+            self._active_staging[key] = buffer
+            return buffer
+        
+        # Create new buffer if pool empty
+        buffer = torch.empty(pinned.shape, dtype=pinned.dtype, device=self.device)
+        self._active_staging[key] = buffer
+        return buffer
+    
+    def _return_staging_buffer(self, key: str) -> None:
+        """Return staging buffer to pool for reuse."""
+        if key not in self._active_staging:
+            return
+            
+        buffer = self._active_staging.pop(key)
+        shape_dtype_key = (tuple(buffer.shape), buffer.dtype)
+        
+        if shape_dtype_key not in self._staging_pool:
+            self._staging_pool[shape_dtype_key] = []
+        
+        # Limit pool size to prevent memory accumulation
+        if len(self._staging_pool[shape_dtype_key]) < 5:
+            self._staging_pool[shape_dtype_key].append(buffer)
+        # else: let buffer be garbage collected
 
     def _ensure_staging(self, key: str) -> None:
         """Allocate / reallocate a GPU staging buffer matching the pinned buf."""
-        pinned = self._pinned[key]
-        existing = self._staging.get(key)
-        if existing is None or existing.shape != pinned.shape or existing.dtype != pinned.dtype:
-            self._staging[key] = torch.empty(
-                pinned.shape, dtype=pinned.dtype, device=self.device
-            )
+        if key not in self._active_staging:
+            self._get_staging_buffer(key)
         if key not in self._events:
             self._events[key] = torch.cuda.Event()
 
@@ -151,7 +180,8 @@ class OffloadManager:
                 continue
             self._ensure_staging(key)
             with torch.cuda.stream(self.data_stream):
-                self._staging[key].copy_(self._pinned[key], non_blocking=True)
+                staging_buffer = self._active_staging[key]
+                staging_buffer.copy_(self._pinned[key], non_blocking=True)
                 self._events[key].record()
             self._prefetch_issued.add(key)
 
@@ -182,7 +212,8 @@ class OffloadManager:
         if key not in self._prefetch_issued:
             self._ensure_staging(key)
             with torch.cuda.stream(self.data_stream):
-                self._staging[key].copy_(self._pinned[key], non_blocking=True)
+                staging_buffer = self._active_staging[key]
+                staging_buffer.copy_(self._pinned[key], non_blocking=True)
                 self._events[key].record()
             self._prefetch_issued.add(key)
 
@@ -190,12 +221,20 @@ class OffloadManager:
         torch.cuda.current_stream().wait_event(self._events[key])
         self._prefetch_issued.discard(key)
 
-        return self._staging[key]
+        return self._active_staging[key]
 
     def has_key(self, key: str) -> bool:
         """Return True if *key* has been stored."""
         return key in self._pinned
 
+    def end_fetch_step(self) -> None:
+        """
+        Release all active staging buffers back to the pool after compute step completes.
+        Should be called after all fetch() operations in a step are finished.
+        """
+        for key in list(self._active_staging.keys()):
+            self._return_staging_buffer(key)
+    
     def clear(self) -> None:
         """
         Release all pinned-memory and GPU staging buffers.
@@ -204,21 +243,49 @@ class OffloadManager:
         denoising steps) to free resources.
         """
         self._pinned.clear()
-        self._staging.clear()
+        self._active_staging.clear()
+        self._staging_pool.clear()
         self._events.clear()
         self._prefetch_issued.clear()
 
     def print_memory_stats(self) -> None:
-        """Print the total size of all pinned CPU and GPU staging buffers."""
+        """Print the total size of all pinned CPU and GPU staging buffers, along with real-time system memory usage."""
+        # Cache statistics
         cpu_total = sum(
             t.element_size() * t.numel() for t in self._pinned.values()
         )
         gpu_total = sum(
-            t.element_size() * t.numel() for t in self._staging.values()
+            t.element_size() * t.numel() for t in self._active_staging.values()
         )
+        
+        # Pool statistics
+        pool_total = sum(
+            sum(t.element_size() * t.numel() for t in buffers)
+            for buffers in self._staging_pool.values()
+        )
+        
+        # Real-time GPU memory
+        gpu_allocated = torch.cuda.memory_allocated(self.device) 
+        gpu_reserved = torch.cuda.memory_reserved(self.device)
+        gpu_max_allocated = torch.cuda.max_memory_allocated(self.device)
+        
+        # Real-time CPU memory (requires psutil if available)
+        cpu_memory_info = ""
+        try:
+            import psutil
+            process = psutil.Process()
+            cpu_memory_gb = process.memory_info().rss / 1024**3
+            cpu_memory_info = f", CPU process: {cpu_memory_gb:.2f} GB"
+        except ImportError:
+            cpu_memory_info = ", CPU process: N/A (install psutil)"
+        
         print(
-            f"[OffloadManager] pinned CPU: {_format_bytes(cpu_total)}, "
-            f"GPU staging: {_format_bytes(gpu_total)}",
+            f"[OffloadManager] Cache - pinned CPU: {_format_bytes(cpu_total)}, "
+            f"GPU active: {_format_bytes(gpu_total)}, "
+            f"GPU pool: {_format_bytes(pool_total)} | "
+            f"GPU - allocated: {_format_bytes(gpu_allocated)}, "
+            f"reserved: {_format_bytes(gpu_reserved)}, "
+            f"max: {_format_bytes(gpu_max_allocated)}{cpu_memory_info}",
             flush=True,
         )
 

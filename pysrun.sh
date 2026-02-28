@@ -14,6 +14,11 @@ if [ ! -f infer.sh ]; then
     exit 1
 fi
 
+export PYTHONPATH=$PYTHONPATH:$(pwd)
+export NNODES=${NNODES:-1}
+export GPUS_PER_NODE=${GPUS_PER_NODE:-2}
+export MASTER_PORT=$(expr $RANDOM % 10000 + 50000)
+
 srun \
     -p "${PARTITION:-debug}" \
     -K \
@@ -21,5 +26,5 @@ srun \
     --job-name="${JOB_NAME:-Jano}" \
     --ntasks-per-node="${GPUS_PER_NODE:-1}" \
     --gres=gpu:"${GPUS_PER_NODE:-1}" \
-    --export=ALL \
+    --export=ALL,MASTER_PORT="$MASTER_PORT" \
     bash infer.sh "$SCRIPT" "$@"

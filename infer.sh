@@ -16,12 +16,10 @@ if [ "$GPUS_PER_NODE" -lt 1 ]; then
     exit 1
 fi
 
-if [ -n "$SLURM_JOB_ID" ]; then
-    export MASTER_ADDR=${MASTER_ADDR:-$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n1)}
-else
-    export MASTER_ADDR=${MASTER_ADDR:-127.0.0.1}
-fi
+export MASTER_ADDR=$(scontrol show jobid=$SLURM_JOB_ID | tr '=' ' ' | grep BatchHost | awk '{print $2}')
 
+echo $MASTER_ADDR
+echo $MASTER_PORT
 export RANK=${RANK:-${SLURM_PROCID:-0}}
 export LOCAL_RANK=${LOCAL_RANK:-${SLURM_LOCALID:-0}}
 export NODE_RANK=${NODE_RANK:-$((RANK / GPUS_PER_NODE))}

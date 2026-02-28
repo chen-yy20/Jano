@@ -558,6 +558,10 @@ class MaskManager:
         return keys
 
     def update_step_level(self):
+        # Clean up staging buffers from previous step
+        if self.offload_manager is not None:
+            self.offload_manager.end_fetch_step()
+            
         timestep = get_timestep()
         if timestep is None or timestep <= self.warmup_steps \
             or timestep > self.num_inference_steps - self.cooldown_steps \
@@ -584,7 +588,8 @@ class MaskManager:
                 )
             keys = self._get_prefetch_keys(cond)
             self.offload_manager.begin_fetch_step(keys)
-        
+
+        self.print_memory_stats()
     
     def print_memory_stats(self):
         """打印当前GPU内存使用情况"""
@@ -596,7 +601,9 @@ class MaskManager:
         print(f"  Current Memory: {format_memory(current_memory)}")
         print(f"  Peak Memory: {format_memory(max_memory)}")
         print(f"  Session Peak Memory: {format_memory(self.max_memory)}", flush=True)
-        
+        if self.offload_manager is not None:
+            self.offload_manager.print_memory_stats()
+
 # ================================ APIs =================================
         
 def init_mask_manager(patch_size, seq_len, num_inference_steps, layer_num,

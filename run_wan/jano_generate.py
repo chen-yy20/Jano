@@ -61,7 +61,7 @@ ENABLE_JANO = 1
 MEMORY_EFFICIENT_CACHE = 0 # 如果炸内存了，设置这个参数为True，可以减少一半的kv cache内存使用。
 GlobalEnv.set_envs("memory_efficient_cache", MEMORY_EFFICIENT_CACHE)
 
-TAG = f"jano_W{WARMUP}_mem{MEMORY_EFFICIENT_CACHE}_B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]})_S{STATIC_THRESH}_M{MEDIUM_THRESH}" if ENABLE_JANO else "ori"
+TAG = f"jano_offload" if ENABLE_JANO else "ori"
 model_id = "1.3B" if "1.3B" in MODEL_PATH else "14B"
 OUTPUT_DIR = f"./wan_results/appendix_result/{model_id}/{get_prompt_id(PROMPT)}"
     
@@ -381,6 +381,7 @@ def generate(args):
         medium_interval = 3,
         static_thresh = STATIC_THRESH,
         static_interval = 6,
+        offload=True,
     )
 
     if args.offload_model is None:
