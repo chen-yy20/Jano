@@ -31,9 +31,8 @@ from jano.dynamic_analyzer import DynamicAnalyzer
 from jano.mask_manager.wan_mask_manager import init_mask_manager
 from jano.stuff import update_timestep, get_timer, store_feature
 from jano.modules.wan.models import WanModel
+from jano.dist.parallel_state import get_cp_group, get_cp_worldsize
 from utils.envs import GlobalEnv
-
-from wan.jano_baselines.pab_manager import get_pab_manager
 
 class WanT2V_jano:
 
@@ -256,51 +255,45 @@ class WanT2V_jano:
             enable_jano = GlobalEnv.get_envs('enable_stdit')
             warmup_steps = GlobalEnv.get_envs('warmup_steps')
             
-            use_jano_pab = False
-            if GlobalEnv.get_envs("janox") == "pab":
-                pab_manager = get_pab_manager()
-                use_jano_pab = True
-            
             with get_timer("generate_e2e"):
                 for step, t in enumerate(tqdm(timesteps)):
                     latent_model_input = latents    
                     timestep = [t]
                     update_timestep(step)
-                    if use_jano_pab:
-                        pab_manager.check_calc(step)
                     
                     timestep = torch.stack(timestep)
                     
                     self.model.to(self.device)
                     
-                    # if get_cp_worldsize() == 2:
-                    #     if get_cp_group().rank_in_group == 0:
-                    #         GlobalEnv.set_envs("cond", 0) # 标记轮次，每步两轮
-                    #         noise_pred_cp = self.model(
-                    #             latent_model_input, t=timestep, **arg_c)[0]
+                    # 2卡并行代码，cfg parallelism.
+                    if get_cp_worldsize() == 2:
+                        if get_cp_group().rank_in_group == 0:
+                            GlobalEnv.set_envs("cond", 0) # 标记轮次，每步两轮
+                            noise_pred_cp = self.model(
+                                latent_model_input, t=timestep, **arg_c)[0]
                             
-                    #     elif get_cp_group().rank_in_group == 1:
-                    #         GlobalEnv.set_envs("cond", 1)
-                    #         noise_pred_cp = self.model(
-                    #             latent_model_input, t=timestep, **arg_null)[0]
+                        elif get_cp_group().rank_in_group == 1:
+                            GlobalEnv.set_envs("cond", 1)
+                            noise_pred_cp = self.model(
+                                latent_model_input, t=timestep, **arg_null)[0]
                             
-                    #     noise_pred_gather = get_cp_group().all_gather(noise_pred_cp, dim=0, split=True)
-                    #     noise_pred_cond = noise_pred_gather[0]
-                    #     noise_pred_uncond = noise_pred_gather[1]
+                        noise_pred_gather = get_cp_group().all_gather(noise_pred_cp, dim=0, split=True)
+                        noise_pred_cond = noise_pred_gather[0]
+                        noise_pred_uncond = noise_pred_gather[1]
                         
-                    #     logger.debug(f"{noise_pred_cond.shape=} {noise_pred_uncond.shape=}")
+                        # print(f"{noise_pred_cond.shape=} {noise_pred_uncond.shape=}", flush=True)
 
-                    # else:  
-                    GlobalEnv.set_envs("cond", 0) # 标记轮次，每步两轮
-                    noise_pred_cond_list = self.model(
-                        latent_model_input, t=timestep, **arg_c)
-                    GlobalEnv.set_envs("cond", 1)
-                    noise_pred_uncond_list = self.model(
-                        latent_model_input, t=timestep, **arg_null)
-                
-                    noise_pred_cond = noise_pred_cond_list[0]
-                    noise_pred_uncond = noise_pred_uncond_list[0]
-                        
+                    else:  
+                        GlobalEnv.set_envs("cond", 0) # 标记轮次，每步两轮
+                        noise_pred_cond_list = self.model(
+                            latent_model_input, t=timestep, **arg_c)
+                        GlobalEnv.set_envs("cond", 1)
+                        noise_pred_uncond_list = self.model(
+                            latent_model_input, t=timestep, **arg_null)
+                    
+                        noise_pred_cond = noise_pred_cond_list[0]
+                        noise_pred_uncond = noise_pred_uncond_list[0]
+                            
                     noise_pred = noise_pred_uncond + guide_scale * (noise_pred_cond - noise_pred_uncond)
                     
                     # Analyze feature and set mask
@@ -309,7 +302,6 @@ class WanT2V_jano:
                         analyze_result = analyzer.step(noise_pred)
                         if analyze_result is not None:
                             mask_manager.generate_mask(analyze_result)
-                            # exit()
                 
                     temp_x0 = sample_scheduler.step(
                         noise_pred.unsqueeze(0),

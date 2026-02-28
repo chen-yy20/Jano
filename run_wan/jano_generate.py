@@ -23,6 +23,7 @@ from wan.utils.utils import cache_image, cache_video, str2bool
 from jano.modules.wan.wan_t2v import WanT2V_jano
 # from stdit.distributed.parallel_state import init_distributed_environment, init_cp_group
 from jano import init_jano
+from jano.dist.parallel_state import init_distributed_environment, init_cp_group
 from jano.stuff import get_prompt_id
 
 from utils.envs import GlobalEnv
@@ -30,47 +31,62 @@ from utils.timer import print_time_statistics, save_time_statistics_to_file
 from utils.quality_metric import evaluate_quality_with_origin
 
 # 主体
-PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
+# PROMPT = "Two cats standing still on a spotlighted stage."
+# PROMPT = "Two cats in comfy boxing gear and bright gloves standing still on a spotlighted stage."
+# PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
+PROMPT = "Hare in snow."
 # PROMPT = "Two beetles traverse dew-heavy moss, droplets popping free and rolling downhill as antennae test the carpeted route."
 # 高动态
 # PROMPT = "A couple in formal evening wear going home get caught in a heavy downpour with umbrellas, zoom in"
 # PROMPT = "A lime-green RC buggy drifts through a chalked mini track on asphalt, rubber flecks flicking outward as cones blur by."
 # 静态
-# PROMPT = "A tranquil tableau of a beautiful, handcrafted ceramic bowl"
+# PROMPT = "A horse stand still on the grass."
+# PROMPT = "A herd of horses standing on the grass"
+# PROMPT = "A horse running across the grass."
+
 # PROMPT = "A tranquil tableau of an exquisite mahogany dining table"
 # 强加速
 # PROMPT = "A simple white pendulum swinging back and forth against a plain black background. The pendulum moves in a clear, rhythmic motion, creating a hypnotic pattern through time while maintaining minimal spatial complexity."
 
-MODEL_PATH = "/home/zhongrx/cyy/Wan2.1/Wan2.1-T2V-1.3B" # 1.3B / 14B
+MODEL_PATH = os.getenv("MODEL_PATH", "./Wan2.1-T2V-14B")  # 1.3B / 14B
 
-T_WEIGHT = 0.6
+T_WEIGHT = 0.7
 DIFFUSION_STENGTH = 0.8
-DIFFUSION_DISTANCE = 2
+DIFFUSION_DISTANCE = 1
 ANALYZE_BLOCK_SIZE = (7,6,8)
 STATIC_THRESH = 0.2
 MEDIUM_THRESH = 0.4
-WARMUP = 5
+WARMUP = 6
 ENABLE_JANO = 1
+MEMORY_EFFICIENT_CACHE = 0 # 如果炸内存了，设置这个参数为True，可以减少一半的kv cache内存使用。
+GlobalEnv.set_envs("memory_efficient_cache", MEMORY_EFFICIENT_CACHE)
 
-TAG = f"W{WARMUP}_B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]})_DS({DIFFUSION_STENGTH}-{DIFFUSION_DISTANCE})_S{STATIC_THRESH}_M{MEDIUM_THRESH}" if ENABLE_JANO else "ori"
+TAG = f"jano_W{WARMUP}_mem{MEMORY_EFFICIENT_CACHE}_B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]})_S{STATIC_THRESH}_M{MEDIUM_THRESH}" if ENABLE_JANO else "ori"
 model_id = "1.3B" if "1.3B" in MODEL_PATH else "14B"
-OUTPUT_DIR = f"./wan_results/jano_wan_result/{model_id}/{get_prompt_id(PROMPT)}"
-
-# Jano+X
-JANO_X = "no"  # pab # no # teacache
-GlobalEnv.set_envs("janox", JANO_X) 
-
-if JANO_X == "pab":
-    from wan.jano_baselines.pab_manager import init_pab_manger
-    SELF_RANGE = 5
-    CROSS_RANGE = 5 # cross attention 占比太小，懒得适配，这个参数没用。
-    init_pab_manger(50, self_range=SELF_RANGE, cross_range=CROSS_RANGE, warmup=WARMUP)
-    TAG = f"pab_s{SELF_RANGE}_{TAG}"
+OUTPUT_DIR = f"./wan_results/appendix_result/{model_id}/{get_prompt_id(PROMPT)}"
     
-if JANO_X == "teacache":
-    from wan.jano_baselines.teacache_forward import wrap_model_with_teacache
-    TEA_THRESH = 0.07
-    TAG = f"tea{TEA_THRESH}_{TAG}"
+    
+# 2卡并行的设置，按照你的方法修改环境变量
+# 初始化并行环境
+rank = int(os.getenv("RANK", 0))
+world_size = int(os.getenv("WORLD_SIZE", 1))
+local_rank = int(os.getenv("LOCAL_RANK", 0))
+
+if world_size > 1:
+    assert world_size == 2, "only support cfg parallel"
+    torch.cuda.set_device(local_rank)
+    init_distributed_environment(
+        world_size = world_size,
+        rank = rank,
+        local_rank = local_rank,
+    )
+    init_cp_group(
+        group_ranks=[[0,1]],
+        local_rank=local_rank,
+        backend="nccl"
+    )
+    
+# ===================================================
     
 EXAMPLE_PROMPT = {
     "t2v-1.3B": {
@@ -364,7 +380,7 @@ def generate(args):
         medium_thresh = MEDIUM_THRESH,
         medium_interval = 3,
         static_thresh = STATIC_THRESH,
-        static_interval = 10,
+        static_interval = 6,
     )
 
     if args.offload_model is None:
@@ -457,11 +473,6 @@ def generate(args):
             use_usp=(args.ulysses_size > 1 or args.ring_size > 1),
             t5_cpu=args.t5_cpu,
         )
-        
-        if GlobalEnv.get_envs("janox") == "teacache":
-            args.teacache_thresh = TEA_THRESH
-            args.use_ret_steps = False
-            wrap_model_with_teacache(wan_t2v, args)
 
         logging.info(
             f"Generating {'image' if 't2i' in args.task else 'video'} ...")
@@ -685,6 +696,9 @@ def generate(args):
                 normalize=True,
                 value_range=(-1, 1))
             
+        if TAG != "ori":
+            evaluate_quality_with_origin(args.save_file, TAG)
+            
     logging.info("Finished.")
 
 
@@ -693,5 +707,4 @@ if __name__ == "__main__":
     generate(args)
     print_time_statistics()
     save_time_statistics_to_file(f"{OUTPUT_DIR}/{TAG}_time_stats.txt")
-    if TAG != "ori":
-        evaluate_quality_with_origin(args.save_file, TAG)
+    

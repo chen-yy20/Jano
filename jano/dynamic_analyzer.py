@@ -7,17 +7,30 @@ from skimage import morphology
 from skimage import measure
 import matplotlib.pyplot as plt
 
+import torch.fft as fft
+
 from .block_manager import init_block_manager
 from .stuff import get_timestep, store_feature
 from utils.envs import GlobalEnv
 
-def min_max_normalize(data):
-    min_val = np.min(data)
-    max_val = np.max(data)
+from utils.timer import get_timer
+
+# def min_max_normalize(data):
+#     min_val = np.min(data)
+#     max_val = np.max(data)
+#     if max_val - min_val != 0:
+#         normalized = (data - min_val) / (max_val - min_val)
+#     else:
+#         normalized = np.zeros_like(data)
+#     return normalized
+
+def min_max_normalize(data: torch.Tensor) -> torch.Tensor:
+    min_val = torch.min(data)
+    max_val = torch.max(data)
     if max_val - min_val != 0:
         normalized = (data - min_val) / (max_val - min_val)
     else:
-        normalized = np.zeros_like(data)
+        normalized = torch.zeros_like(data)
     return normalized
 
 class DynamicAnalyzer:
@@ -51,6 +64,7 @@ class DynamicAnalyzer:
         
     def step(self, latent):
         """存储潜变量，供后续分析"""
+        # latent shape： [C,T,H,W]
         step = get_timestep()
         if step <= self.analysis_steps:
             self.stored_features.append(latent)
@@ -112,16 +126,16 @@ class DynamicAnalyzer:
             
         return temporal_dynamics, spatial_dynamics
     
-    def _enhance_combined_score(self, original_combined, block_dims):
+    def _enhance_combined_score(self, original_combined: torch.Tensor, block_dims: tuple) -> torch.Tensor:
         """使用向内扩散增强combined score"""
         nt, nh, nw = block_dims
-        enhanced_combined = original_combined.copy()
+        enhanced_combined = original_combined.clone()
         
         for t in range(nt):
             current_layer = original_combined.reshape(nt, nh, nw)[t, :, :]
             
-            score_std = np.std(current_layer)
-            score_mean = np.mean(current_layer)
+            score_std = torch.std(current_layer)
+            score_mean = torch.mean(current_layer)
             
             contour_threshold = score_mean + 0.3 * score_std
             contour_mask = current_layer > contour_threshold
@@ -129,44 +143,63 @@ class DynamicAnalyzer:
             internal_threshold = score_mean
             potential_internal_mask = current_layer < internal_threshold
             
-            if not np.any(contour_mask) or not np.any(potential_internal_mask):
+            if not torch.any(contour_mask) or not torch.any(potential_internal_mask):
                 continue
             
             # 边界禁止区域
-            forbidden_mask = np.zeros_like(current_layer, dtype=bool)
+            forbidden_mask = torch.zeros_like(current_layer, dtype=torch.bool)
             forbidden_mask[0, :] = True
             forbidden_mask[-1, :] = True
             forbidden_mask[:, 0] = True
             forbidden_mask[:, -1] = True
             
             candidate_internal = potential_internal_mask & (~forbidden_mask)
-            labeled_candidates = measure.label(candidate_internal)
-            true_internal_mask = np.zeros_like(current_layer, dtype=bool)
+            
+            # 将标记操作转移到CPU上进行，因为PyTorch没有直接对应的connected components labeling
+            labeled_candidates = torch.from_numpy(
+                measure.label(candidate_internal.cpu().numpy())
+            ).to(current_layer.device)
+            
+            true_internal_mask = torch.zeros_like(current_layer, dtype=torch.bool)
             
             # 筛选有效的内部区域
-            for region_id in range(1, labeled_candidates.max() + 1):
+            for region_id in range(1, labeled_candidates.max().item() + 1):
                 region_mask = labeled_candidates == region_id
-                region_boundary = morphology.binary_dilation(region_mask) & (~region_mask)
                 
-                if np.any(contour_mask):
-                    distance_to_contour = ndimage.distance_transform_edt(~contour_mask)
-                    boundary_distances = distance_to_contour[region_boundary]
-                    close_to_contour_ratio = np.mean(boundary_distances <= 2.0)
+                # 膨胀操作需要在CPU上进行
+                region_mask_np = region_mask.cpu().numpy()
+                dilated_region = morphology.binary_dilation(region_mask_np)
+                region_boundary = torch.from_numpy(
+                    dilated_region & (~region_mask_np)
+                ).to(current_layer.device)
+                
+                if torch.any(contour_mask):
+                    # 距离变换需要在CPU上进行
+                    distance_to_contour = torch.from_numpy(
+                        ndimage.distance_transform_edt(~contour_mask.cpu().numpy())
+                    ).to(current_layer.device)
                     
-                    if close_to_contour_ratio >= 0.3 and np.sum(region_mask) >= 2:
+                    boundary_distances = distance_to_contour[region_boundary]
+                    close_to_contour_ratio = torch.mean((boundary_distances <= 2.0).float())
+                    
+                    if close_to_contour_ratio >= 0.3 and torch.sum(region_mask) >= 2:
                         true_internal_mask |= region_mask
             
             # 扩散增强
-            if np.any(true_internal_mask) and np.any(contour_mask):
-                distance_from_contour = ndimage.distance_transform_edt(~contour_mask)
+            if torch.any(true_internal_mask) and torch.any(contour_mask):
+                # 距离变换在CPU上进行
+                distance_from_contour = torch.from_numpy(
+                    ndimage.distance_transform_edt(~contour_mask.cpu().numpy())
+                ).to(current_layer.device)
+                
                 valid_diffusion_mask = true_internal_mask & (distance_from_contour <= self.max_diffusion_distance)
                 
-                if np.any(valid_diffusion_mask):
+                if torch.any(valid_diffusion_mask):
                     distances = distance_from_contour[valid_diffusion_mask]
-                    diffusion_weights = np.exp(-distances / (self.max_diffusion_distance / 2))
-                    avg_contour_score = np.mean(current_layer[contour_mask])
+                    diffusion_weights = torch.exp(-distances / (self.max_diffusion_distance / 2))
+                    avg_contour_score = torch.mean(current_layer[contour_mask])
                     enhancement_values = diffusion_weights * avg_contour_score * self.diffusion_strength
-                    enhanced_layer = current_layer.copy()
+                    enhanced_layer = current_layer.clone()
                     enhanced_layer[valid_diffusion_mask] += enhancement_values
                     
                     # 更新增强后的combined score
@@ -175,7 +208,64 @@ class DynamicAnalyzer:
                     enhanced_combined[start_idx:end_idx] = enhanced_layer.flatten()
         
         return enhanced_combined
+    
+    def _compute_fft_dynamics(self, blocked_latents: torch.Tensor):
+        # 先把 steps 维度平均掉，得到 (blocknum, t, w, h)
+        x = blocked_latents.mean(dim=0)                 # (B, T, W, H)
 
+        # ----------------  temporal dynamics  ----------------
+        # 1D-FFT along t
+        t_fft = fft.rfft(x, dim=1)                      # (B, T//2+1, W, H)
+        t_mag = t_fft.abs()                             # 幅值
+        # 在 W,H 上平均
+        t_mag = t_mag.mean(dim=(-2, -1))                # (B, T//2+1)
+        # 能量
+        temporal_dynamics = (t_mag ** 2).sum(dim=-1)    # (B,)
+
+        # ----------------  spatial dynamics  -----------------
+        # 展平 W,H -> s    (B, T, S)
+        s_feat = x.flatten(start_dim=-2)                # (B, T, S)
+        # 1D-FFT along s
+        s_fft = fft.rfft(s_feat, dim=-1)                # (B, T, S//2+1)
+        s_mag = s_fft.abs()                             # 幅值
+        # 在 T 上平均
+        s_mag = s_mag.mean(dim=1)                       # (B, S//2+1)
+        # 能量
+        spatial_dynamics = (s_mag ** 2).sum(dim=-1)     # (B,)
+
+        return temporal_dynamics, spatial_dynamics
+
+    def _compute_var_dynamics(self, blocked_latents: torch.Tensor):
+        """
+        参数
+        ----
+        blocked_latents: (steps, blocknum, t, w, h)
+
+        返回
+        ----
+        temporal_dynamics:  (blocknum,)  每个 block 在 t 维度上的方差
+        spatial_dynamics :  (blocknum,)  每个 block 在 s 维度上的方差
+        """
+        # 先把 steps 维度平均掉，得到 (blocknum, t, w, h)
+        x = blocked_latents.mean(dim=0)
+        
+        # ----------------  temporal dynamics  ----------------
+        # 在 w, h 上平均 -> (blocknum, t)
+        t_feat = x.mean(dim=(-2, -1))
+        # 对 t 维计算方差
+        temporal_dynamics = t_feat.var(dim=-1)          # (blocknum,)
+
+        # ----------------  spatial dynamics  -----------------
+        # 把 w, h 展平成 s -> (blocknum, t, s)
+        s_feat = x.flatten(start_dim=-2)                # (blocknum, t, s)
+        # 在 t 维平均 -> (blocknum, s)
+        s_feat = s_feat.mean(dim=1)
+        # 对 s 维计算方差
+        spatial_dynamics = s_feat.var(dim=-1)           # (blocknum,)
+
+        return temporal_dynamics, spatial_dynamics
+
+    @get_timer("analyze")
     def analyze(self):
         """储存完profile steps后, 进行动态性分析并返回enhanced combined score"""
         if not self.stored_features:
@@ -189,18 +279,17 @@ class DynamicAnalyzer:
         latents_tensor = latents_tensor.cuda()
         blocked_latents = self.block_manager.block_3d(latents_tensor)
         
-        if GlobalEnv.get_envs("cc_exp") and GlobalEnv.get_envs("static_interval") == 0:
-            store_feature(latents_tensor, timestep=self.analysis_steps, layer=0, name="stack_latent")
-            print(f"Stored stack_latent ({latents_tensor.shape}).", flush=True)
+        # if GlobalEnv.get_envs("cc_exp") and GlobalEnv.get_envs("static_interval") == 0:
+        #     store_feature(latents_tensor, timestep=self.analysis_steps, layer=0, name="stack_latent")
+        #     print(f"Stored stack_latent ({latents_tensor.shape}).", flush=True)
         
         # 计算动态性（在GPU上）
+        # print(f"{blocked_latents.shape=}", flush=True) # (steps, blocknum, t, w, h)
         temporal_dynamics, spatial_dynamics = self._compute_dynamics(blocked_latents)
-        
-        # 转换到CPU进行后续处理
-        temporal_dynamics_cpu = temporal_dynamics.cpu().numpy()
-        spatial_dynamics_cpu = spatial_dynamics.cpu().numpy()
-        
-        original_combined = self.temporal_weight * temporal_dynamics_cpu + self.spatial_weight * spatial_dynamics_cpu
+        # print(f"{temporal_dynamics.shape=} {spatial_dynamics.shape=}", flush=True) # (blocknum), (blocknum)
+        # exit()
+                
+        original_combined = self.temporal_weight * temporal_dynamics + self.spatial_weight * spatial_dynamics
         original_combined = min_max_normalize(original_combined)
         
         # 计算增强版本
@@ -210,17 +299,18 @@ class DynamicAnalyzer:
         )
         
         # 可视化 - 确保传入的都是numpy数组
-        visualize_block_dynamics(
-            temporal_dynamics_cpu, spatial_dynamics_cpu, original_combined, enhanced_combined,
-            (self.block_manager.nt, self.block_manager.nh, self.block_manager.nw),
-            save_name=self.tag
-        )
+        # visualize_block_dynamics(
+        #     temporal_dynamics_cpu, spatial_dynamics_cpu, original_combined, enhanced_combined,
+        #     (self.block_manager.nt, self.block_manager.nh, self.block_manager.nw),
+        #     save_name=self.tag
+        # )
         
         print(f"Analysis completed for {self.tag}\n", flush=True)
+        # exit()
         
         return enhanced_combined
     
-    
+@get_timer("visualize")
 def visualize_block_dynamics(temporal_dynamics, spatial_dynamics, original_combined, enhanced_combined, 
                            block_dims, save_name="block_dynamics"):
     """
@@ -265,14 +355,14 @@ def visualize_block_dynamics(temporal_dynamics, spatial_dynamics, original_combi
     cmap = 'viridis'
     
     # 1. 时间复杂度热力图
-    im1 = axes[0, 0].imshow(temporal_2d, cmap=cmap, aspect='auto', vmin=0, vmax=1)
+    im1 = axes[0, 0].imshow(temporal_2d, cmap=cmap, aspect='auto')
     axes[0, 0].set_title(f'Temporal Dynamics\n(Mean: {temporal_2d.mean():.4f})', fontsize=12)
     axes[0, 0].set_xlabel('Width Blocks')
     axes[0, 0].set_ylabel('Height Blocks')
     plt.colorbar(im1, ax=axes[0, 0], shrink=0.8)
     
     # 2. 空间复杂度热力图
-    im2 = axes[0, 1].imshow(spatial_2d, cmap=cmap, aspect='auto', vmin=0, vmax=1)
+    im2 = axes[0, 1].imshow(spatial_2d, cmap=cmap, aspect='auto')
     axes[0, 1].set_title(f'Spatial Dynamics\n(Mean: {spatial_2d.mean():.4f})', fontsize=12)
     axes[0, 1].set_xlabel('Width Blocks')
     axes[0, 1].set_ylabel('Height Blocks')

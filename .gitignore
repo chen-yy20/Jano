@@ -2,6 +2,30 @@ wan_bckup
 *.mp4
 *.png
 *.log
+*.pt
+*.npz
 note.md
-__pycache__
 wan_results/
+evaluation
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Result and experiment output files
+*_time_stats.txt
+*_quality_metrics.json
+wan_results/
+run_cvx/cvx_results/
+run_wan/wan_results/
+run_flux/flux_results/
+
+# Model checkpoints and data
+*.safetensors
+*.bin

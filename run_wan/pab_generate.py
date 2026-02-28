@@ -20,10 +20,11 @@ from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
 from wan.utils.utils import cache_image, cache_video, str2bool
 # from tocache.apply_toca import apply_toca_to_wan
 
-from wan.pab_text2video import WanT2V_pab
+from wan.jano_baselines.pab_text2video import WanT2V_pab
 from wan.jano_baselines.pab_manager import init_pab_manger
 
 from jano.stuff import get_prompt_id
+from jano.dist.parallel_state import init_distributed_environment, init_cp_group
 
 from utils.timer import init_timer, get_timer, print_time_statistics, save_time_statistics_to_file
 from utils.quality_metric import evaluate_quality_with_origin
@@ -34,16 +35,40 @@ time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
 
 init_timer()
 PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
-MODEL_PATH = "/home/fit/zhaijdcyy/WORK/models/Wan2.1-T2V-1.3B" # 1.3B / 14B
+MODEL_PATH = os.getenv("MODEL_PATH", "./Wan2.1-T2V-1.3B")  # 1.3B / 14B
 ENABLE_PAB = 1
 WARMUP = 7
 SELF_RANGE = 2
 CROSS_RANGE = 5
+LAYER_INTERVAL = 4 # 设置为n，内存消耗就减少为n分之一
 
-TAG = f"s{SELF_RANGE}c{CROSS_RANGE}" if ENABLE_PAB else "ori"
-OUTPUT_DIR = f"./wan_results/pab_wan_result/{get_prompt_id(PROMPT)}"
+TAG = f"s{SELF_RANGE}c{CROSS_RANGE}_i{LAYER_INTERVAL}" if ENABLE_PAB else "ori"
+model_id = "1.3B" if "1.3B" in MODEL_PATH else "14B"
+OUTPUT_DIR = f"./wan_results/pab_wan_result/{model_id}/{get_prompt_id(PROMPT)}"
 
-init_pab_manger(50, SELF_RANGE, CROSS_RANGE, WARMUP)
+init_pab_manger(50, SELF_RANGE, CROSS_RANGE, WARMUP, LAYER_INTERVAL)
+
+# 2卡并行的设置，按照你的方法修改环境变量
+# 初始化并行环境
+rank = int(os.getenv("RANK", 0))
+world_size = int(os.getenv("WORLD_SIZE", 1))
+local_rank = int(os.getenv("LOCAL_RANK", 0))
+
+if world_size > 1:
+    assert world_size == 2, "only support cfg parallel"
+    torch.cuda.set_device(local_rank)
+    init_distributed_environment(
+        world_size = world_size,
+        rank = rank,
+        local_rank = local_rank,
+    )
+    init_cp_group(
+        group_ranks=[[0,1]],
+        local_rank=local_rank,
+        backend="nccl"
+    )
+    
+# ===================================================
 
 EXAMPLE_PROMPT = {
     "t2v-1.3B": {
@@ -327,35 +352,35 @@ def generate(args):
         args.offload_model = False if world_size > 1 else True
         logging.info(
             f"offload_model is not specified, set to {args.offload_model}.")
-    if world_size > 1:
-        torch.cuda.set_device(local_rank)
-        dist.init_process_group(
-            backend="nccl",
-            init_method="env://",
-            rank=rank,
-            world_size=world_size)
-    else:
-        assert not (
-            args.t5_fsdp or args.dit_fsdp
-        ), f"t5_fsdp and dit_fsdp are not supported in non-distributed environments."
-        assert not (
-            args.ulysses_size > 1 or args.ring_size > 1
-        ), f"context parallel are not supported in non-distributed environments."
+    # if world_size > 1:
+    #     torch.cuda.set_device(local_rank)
+    #     dist.init_process_group(
+    #         backend="nccl",
+    #         init_method="env://",
+    #         rank=rank,
+    #         world_size=world_size)
+    # else:
+    #     assert not (
+    #         args.t5_fsdp or args.dit_fsdp
+    #     ), f"t5_fsdp and dit_fsdp are not supported in non-distributed environments."
+    #     assert not (
+    #         args.ulysses_size > 1 or args.ring_size > 1
+    #     ), f"context parallel are not supported in non-distributed environments."
 
-    if args.ulysses_size > 1 or args.ring_size > 1:
-        assert args.ulysses_size * args.ring_size == world_size, f"The number of ulysses_size and ring_size should be equal to the world size."
-        from xfuser.core.distributed import (
-            init_distributed_environment,
-            initialize_model_parallel,
-        )
-        init_distributed_environment(
-            rank=dist.get_rank(), world_size=dist.get_world_size())
+    # if args.ulysses_size > 1 or args.ring_size > 1:
+    #     assert args.ulysses_size * args.ring_size == world_size, f"The number of ulysses_size and ring_size should be equal to the world size."
+    #     from xfuser.core.distributed import (
+    #         init_distributed_environment,
+    #         initialize_model_parallel,
+    #     )
+    #     init_distributed_environment(
+    #         rank=dist.get_rank(), world_size=dist.get_world_size())
 
-        initialize_model_parallel(
-            sequence_parallel_degree=dist.get_world_size(),
-            ring_degree=args.ring_size,
-            ulysses_degree=args.ulysses_size,
-        )
+    #     initialize_model_parallel(
+    #         sequence_parallel_degree=dist.get_world_size(),
+    #         ring_degree=args.ring_size,
+    #         ulysses_degree=args.ulysses_size,
+    #     )
 
     if args.use_prompt_extend:
         if args.prompt_extend_method == "dashscope":
@@ -635,7 +660,7 @@ def generate(args):
         #     suffix = '.png' if "t2i" in args.task else '.mp4'
         #     filename = f"{args.task}_{args.size.replace('*','x') if sys.platform=='win32' else args.size}_{args.ulysses_size}_{args.ring_size}_{formatted_prompt}_{formatted_time}" + suffix
         
-        filename = f"{args.task}_{TAG}_{get_prompt_id(PROMPT)}" + suffix
+        filename = f"{TAG}_{get_prompt_id(PROMPT)}_{args.task}" + suffix
         
         os.makedirs(args.output_dir, exist_ok=True)
         args.save_file = os.path.join(args.output_dir, filename)
@@ -656,6 +681,8 @@ def generate(args):
                 nrow=1,
                 normalize=True,
                 value_range=(-1, 1))
+        if TAG != "ori":
+            evaluate_quality_with_origin(args.save_file, TAG)
     logging.info("Finished.")
 
 
@@ -664,5 +691,4 @@ if __name__ == "__main__":
     generate(args)
     print_time_statistics()
     save_time_statistics_to_file(f"{OUTPUT_DIR}/{TAG}_time_stats.txt")
-    if ENABLE_PAB:
-        evaluate_quality_with_origin(args.save_file, TAG)
+    

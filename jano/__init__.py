@@ -2,7 +2,6 @@ import os
 from utils.envs import GlobalEnv
 from utils.timer import init_timer
 
-
 def init_jano(
         enable,
         model,

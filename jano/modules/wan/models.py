@@ -12,10 +12,8 @@ from .attention import flash_attention
 from utils.envs import GlobalEnv
 from utils.timer import get_timer
 from jano.mask_manager.wan_mask_manager import get_mask_manager
-from jano.modules.wan.attention_processor import WanSelfAttention_masked_KV
+from jano.modules.wan.attention_processor import WanSelfAttention_jano
 from jano.stuff import get_timestep, get_masked_timer, print_gpu_memory
-
-from wan.jano_baselines.pab_manager import get_pab_manager
 
 __all__ = ['WanModel']
 
@@ -128,11 +126,6 @@ class WanSelfAttention(nn.Module):
         self.qk_norm = qk_norm
         self.eps = eps
         self.layer_idx = layer_idx
-        
-        self.jano_pab = False
-        if GlobalEnv.get_envs("janox") == "pab":
-            self.jano_pab = True
-            self.pab_manager = get_pab_manager()
 
         # layers
         self.q = nn.Linear(dim, dim)
@@ -275,10 +268,11 @@ class WanAttentionBlock(nn.Module):
 
         # layers
         self.norm1 = WanLayerNorm(dim, eps)
-        if GlobalEnv.get_envs("enable_stdit"):
-            self.self_attn = WanSelfAttention_masked_KV(dim, num_heads, window_size, qk_norm, eps, layer_idx)
-        else:
-            self.self_attn = WanSelfAttention(dim, num_heads, window_size, qk_norm, eps, layer_idx)
+        self.self_attn = WanSelfAttention_jano(dim, num_heads, window_size, qk_norm, eps, layer_idx)
+        # if GlobalEnv.get_envs("enable_stdit"):
+        #     self.self_attn = WanSelfAttention_jano(dim, num_heads, window_size, qk_norm, eps, layer_idx)
+        # else:
+        #     self.self_attn = WanSelfAttention(dim, num_heads, window_size, qk_norm, eps, layer_idx)
         self.norm3 = WanLayerNorm(
             dim, eps,
             elementwise_affine=True) if cross_attn_norm else nn.Identity()
