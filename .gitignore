@@ -15,6 +15,7 @@ __pycache__/
 *.pyd
 
 # OS metadata
+.vscode/
 .DS_Store
 Thumbs.db
 
