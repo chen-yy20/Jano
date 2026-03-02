@@ -33,8 +33,8 @@ from utils.quality_metric import evaluate_quality_with_origin
 # 主体
 # PROMPT = "Two cats standing still on a spotlighted stage."
 # PROMPT = "Two cats in comfy boxing gear and bright gloves standing still on a spotlighted stage."
-# PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
-PROMPT = "Hare in snow."
+PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
+# PROMPT = "Hare in snow."
 # PROMPT = "Two beetles traverse dew-heavy moss, droplets popping free and rolling downhill as antennae test the carpeted route."
 # 高动态
 # PROMPT = "A couple in formal evening wear going home get caught in a heavy downpour with umbrellas, zoom in"
@@ -55,13 +55,12 @@ DIFFUSION_STENGTH = 0.8
 DIFFUSION_DISTANCE = 1
 ANALYZE_BLOCK_SIZE = (7,6,8)
 STATIC_THRESH = 0.2
-MEDIUM_THRESH = 0.4
+MEDIUM_THRESH = 0.6
 WARMUP = 6
 ENABLE_JANO = 1
-MEMORY_EFFICIENT_CACHE = 0 # 如果炸内存了，设置这个参数为True，可以减少一半的kv cache内存使用。
-GlobalEnv.set_envs("memory_efficient_cache", MEMORY_EFFICIENT_CACHE)
+OFFLOAD_KV = 1
 
-TAG = f"jano_offload" if ENABLE_JANO else "ori"
+TAG = f"jano_offload{OFFLOAD_KV}" if ENABLE_JANO else "ori"
 model_id = "1.3B" if "1.3B" in MODEL_PATH else "14B"
 OUTPUT_DIR = f"./wan_results/appendix_result/{model_id}/{get_prompt_id(PROMPT)}"
     
@@ -69,6 +68,7 @@ OUTPUT_DIR = f"./wan_results/appendix_result/{model_id}/{get_prompt_id(PROMPT)}"
 # 2卡并行的设置，按照你的方法修改环境变量
 # 初始化并行环境
 rank = int(os.getenv("RANK", 0))
+GlobalEnv.set_envs("local_rank", rank)
 world_size = int(os.getenv("WORLD_SIZE", 1))
 local_rank = int(os.getenv("LOCAL_RANK", 0))
 
@@ -381,7 +381,7 @@ def generate(args):
         medium_interval = 3,
         static_thresh = STATIC_THRESH,
         static_interval = 6,
-        offload=True,
+        offload=OFFLOAD_KV,
     )
 
     if args.offload_model is None:

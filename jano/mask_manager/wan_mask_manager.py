@@ -76,6 +76,50 @@ def print_score_stats(tensor: torch.Tensor):
     print(f"80%: {quantiles[2]:.3f}")
     print(f"=================================")
 
+class MemoryTracker:
+    """精确的内存跟踪器，专门监控offload相关的内存使用"""
+    def __init__(self):
+        self.baseline_gpu_memory = torch.cuda.memory_allocated()
+        self.peak_gpu_memory = self.baseline_gpu_memory
+        
+        # 分类内存统计
+        self.cache_cpu_memory = 0  # CPU缓存内存 
+        self.cache_gpu_memory = 0  # GPU staging buffer内存
+        self.other_gpu_memory = self.baseline_gpu_memory  # 其他GPU内存
+        
+    def update_cache_memory(self, cpu_bytes: int, gpu_bytes: int):
+        """更新缓存相关的内存统计"""
+        self.cache_cpu_memory = cpu_bytes
+        self.cache_gpu_memory = gpu_bytes
+        
+    def update_gpu_peak(self):
+        """更新GPU峰值内存"""
+        current = torch.cuda.memory_allocated()
+        self.peak_gpu_memory = max(self.peak_gpu_memory, current)
+        self.other_gpu_memory = current - self.cache_gpu_memory
+        
+    def get_memory_stats(self) -> dict:
+        """获取详细的内存统计"""
+        current_gpu = torch.cuda.memory_allocated()
+        return {
+            'current_gpu_gb': current_gpu / 1024**3,
+            'peak_gpu_gb': self.peak_gpu_memory / 1024**3,
+            'cache_cpu_gb': self.cache_cpu_memory / 1024**3, 
+            'cache_gpu_gb': self.cache_gpu_memory / 1024**3,
+            'other_gpu_gb': (current_gpu - self.cache_gpu_memory) / 1024**3,
+            'gpu_saved_gb': (self.cache_cpu_memory - self.cache_gpu_memory) / 1024**3
+        }
+        
+    def print_stats(self, step: int, offload_enabled: bool):
+        """打印精简而关键的内存统计"""
+        stats = self.get_memory_stats()
+        
+        if offload_enabled:
+            print(f"Step {step} | GPU Peak: {stats['peak_gpu_gb']:.2f}GB, Current: {stats['current_gpu_gb']:.2f}GB")
+            print(f"         | Cache - CPU: {stats['cache_cpu_gb']:.2f}GB, GPU: {stats['cache_gpu_gb']:.2f}GB, Saved: {stats['gpu_saved_gb']:.2f}GB")
+        else:
+            print(f"Step {step} | GPU Peak: {stats['peak_gpu_gb']:.2f}GB, Current: {stats['current_gpu_gb']:.2f}GB (no offload)")
+
 class MaskManager:
     # 维护latent mask 和 sequence mask，提供apply mask和restore kv等接口
     def __init__(self, patch_size: tuple, seq_len: int, num_inference_steps: int, layer_nums: int,
@@ -114,6 +158,7 @@ class MaskManager:
         # 记录最大内存使用
         self.max_memory = 0
         self.offload_kv = False
+        self.memory_tracker = MemoryTracker()
 
         # Dual-stream pipeline offload manager (optional)
         # When set, cached KV/x tensors are stored in CPU pinned memory and
@@ -128,76 +173,6 @@ class MaskManager:
                 flush=True,
             )
         
-    # def generate_ratio_mask(self, combined_score):
-    #     """
-    #     基于时空复杂度分析创建mask，使用固定比例:
-    #     1: 低动态区域 (底部60%)
-    #     2: 中等动态区域 (中间30%)
-    #     3: 高动态区域 (顶部10%)
-    #     """
-    #     combined_score = torch.from_numpy(combined_score)
-    #     print_score_stats(combined_score)
-        
-    #     bm = get_block_manager()
-    #     C, T, H, W = bm.latent_shape
-        
-    #     # 计算分位数阈值
-    #     sorted_scores = torch.sort(combined_score.flatten())[0]
-    #     num_elements = len(sorted_scores)
-        
-    #     # 设定比例阈值 (可以根据需要调整这些比例)
-    #     low_ratio = GlobalEnv.get_envs("low_r")  # 60%的区域为低动态
-    #     medium_ratio = GlobalEnv.get_envs("med_r")  # 30%的区域为中等动态
-    #     # 剩余10%为高动态
-        
-    #     # 计算阈值
-    #     medium_thresh_idx = int(num_elements * low_ratio)
-    #     high_thresh_idx = int(num_elements * (low_ratio + medium_ratio))
-        
-    #     medium_thresh = sorted_scores[medium_thresh_idx]
-    #     high_thresh = sorted_scores[high_thresh_idx]
-        
-    #     # 创建块级别的标注mask (默认为1，表示低动态)
-    #     self.block_mask = torch.ones_like(combined_score, dtype=torch.int8)
-        
-    #     # 中等动态区域
-    #     medium_condition = (combined_score > medium_thresh) & (combined_score <= high_thresh)
-    #     self.block_mask = torch.where(medium_condition, 2, self.block_mask)
-        
-    #     # 高动态区域
-    #     high_condition = combined_score > high_thresh
-    #     self.block_mask = torch.where(high_condition, 3, self.block_mask)
-        
-    #     # 将block mask转换为完整分辨率mask
-    #     bt, bh, bw = bm.block_size
-    #     nt, nh, nw = bm.padded_T // bt, bm.padded_H // bh, bm.padded_W // bw
-        
-    #     block_mask_3d = self.block_mask.reshape(nt, nh, nw)
-    #     latent_mask = torch.zeros((T, H, W), dtype=torch.int64, device=torch.cuda.current_device())
-        
-    #     # 扩展block mask到完整分辨率
-    #     for t in range(nt):
-    #         for h in range(nh):
-    #             for w in range(nw):
-    #                 value = block_mask_3d[t, h, w]
-    #                 latent_mask[t*bt:(t+1)*bt, 
-    #                         h*bh:(h+1)*bh, 
-    #                         w*bw:(w+1)*bw] = value
-        
-    #     latent_mask = latent_mask.unsqueeze(0).expand(C, -1, -1, -1)
-        
-    #     # 统计各个区域的比例
-    #     total_pixels = C * T * H * W
-    #     low_dynamic_ratio = (latent_mask == 1).sum().item() / total_pixels * 100
-    #     medium_dynamic_ratio = (latent_mask == 2).sum().item() / total_pixels * 100
-    #     high_dynamic_ratio = (latent_mask == 3).sum().item() / total_pixels * 100
-        
-    #     print(f"Created dynamics-based mask with:")
-    #     print(f"Low dynamic regions (1): {low_dynamic_ratio:.2f}%")
-    #     print(f"Medium dynamic regions (2): {medium_dynamic_ratio:.2f}%")
-    #     print(f"High dynamic regions (3): {high_dynamic_ratio:.2f}%")
-    
-    #     return latent_mask
 
     def generate_mask(self, combined_score):
         """
@@ -351,34 +326,32 @@ class MaskManager:
         return x[:, sequence_mask, ...]  # ...会自动处理剩余维度
 
     def process_masked_output(self, x: torch.Tensor, name: str, layer_idx: int) -> torch.Tensor:
+        """将本步计算出的局部 token 写回到 restored_x（全序列 GPU tensor）。
+
+        restored_x 在步间持久保留：
+          step_level 3 → 全部 token 重新计算，直接替换
+          step_level 2 → active+medium token 更新，static 区域维持上一次 level-3 的值
+          step_level 1 → 仅 active token 更新，medium+static 维持上一步的值
+        无需额外 cache，只做 scatter-write。
+        """
         if self.step_level == 0:
             self.restored_x = x
             return x
-        if self.get_seq_len() == 0: # 特殊情况
+        if self.get_seq_len() == 0:
             return self.restored_x
-        
-        state_key = f"{name}_{layer_idx}"
-        device = x.device
+
         if self.restored_x is None:
-            B = x.shape[0]
-            D = x.shape[1]
-            self.restored_x = torch.zeros(B, self.full_seq_len, D, device=device, dtype=x.dtype)
-            
-        # 在is_update_step时打印内存状态
-        if self.step_level == 3: # 全部计算
-            self.static_cache[state_key] = x[:, self.static_bool_mask, :]
-            self.medium_cache[state_key] = x[:, self.medium_bool_mask, :]
+            B, _, D = x.shape
+            self.restored_x = torch.zeros(
+                B, self.full_seq_len, D, device=x.device, dtype=x.dtype
+            )
+
+        if self.step_level == 3:
             self.restored_x = x
-        elif self.step_level == 2: # active + medium
-            # 储存
-            self.medium_cache[state_key] = x[:, self.medium_bool_mask_in_l2, :]
-            # 恢复
+        elif self.step_level == 2:
             self.restored_x[:, ~self.static_bool_mask, :] = x
-            self.restored_x[:, self.static_bool_mask, :] = self.static_cache[state_key]
         elif self.step_level == 1:
             self.restored_x[:, self.active_mask, :] = x
-            self.restored_x[:, self.medium_bool_mask, :] = self.medium_cache[state_key]
-            self.restored_x[:, self.static_bool_mask, :] = self.static_cache[state_key]
         return self.restored_x
         
     def process_kv_sequence(self, kv: torch.Tensor, name: str, layer_idx: int) -> torch.Tensor:
@@ -392,34 +365,41 @@ class MaskManager:
         if self.step_level == 3:           
             static_data = x[:, self.static_bool_mask, :]
             medium_data = x[:, self.medium_bool_mask, :]
-            
+
+            if layer_idx == 20:
+                print(f"{get_timestep()} | Store to {state_key}, {static_data.shape=}, {static_data[0][2][:5]=}", flush=True)
+
             if self.offload_manager is not None:
-                # Async D2H copy to CPU pinned memory (dual-stream pipeline)
+                # register_shape 幂等：首次调用时立即分配 pinned buffer，后续调用为空操作
+                self.offload_manager.register_shape(
+                    f"s_kv_{state_key}", tuple(static_data.shape), static_data.dtype
+                )
+                self.offload_manager.register_shape(
+                    f"m_kv_{state_key}", tuple(medium_data.shape), medium_data.dtype
+                )
                 self.offload_manager.store_async(static_data, f"s_kv_{state_key}")
                 self.offload_manager.store_async(medium_data, f"m_kv_{state_key}")
+                del static_data, medium_data
             elif self.offload_kv:
                 self.static_cache[state_key] = static_data.cpu()
                 self.medium_cache[state_key] = medium_data.cpu()
             else:
                 self.static_cache[state_key] = static_data
                 self.medium_cache[state_key] = medium_data
-            if get_timestep() == GlobalEnv.get_envs("warmup_steps") + 1:
-                print(f"Stored {state_key}, {x.shape=}, "
-                    f"tensor_MiB={x.element_size() * x.nelement() >> 20}, " # >>20，右移20位，Byte转换为MB
-                    f"cuda_reserved_MiB={torch.cuda.memory_reserved() >> 20}, "
-                    f"cuda_allocated_MiB={torch.cuda.memory_allocated() >> 20}", flush=True)
+
             result = x
         elif self.step_level == 2:
-            # 存储
+            # 存储 medium（当前帧 medium+active tokens → CPU）
             medium_data = x[:, self.medium_bool_mask_in_l2, :]
             if self.offload_manager is not None:
                 self.offload_manager.store_async(medium_data, f"m_kv_{state_key}")
+                del medium_data
             elif self.offload_kv:
                 self.medium_cache[state_key] = medium_data.cpu()
             else:
                 self.medium_cache[state_key] = medium_data
                 
-            # 恢复（从CPU转回GPU，使用双流流水线或naive方式）
+            # 恢复 static（从 CPU fetch 回 GPU）
             if self.offload_manager is not None:
                 static_kv = self.offload_manager.fetch(f"s_kv_{state_key}")
                 if static_kv is None:
@@ -429,11 +409,10 @@ class MaskManager:
             else:
                 static_kv = self.static_cache[state_key]
                 
-            if layer_idx == 20:
-                print(f"{get_timestep()} | Fetch from {state_key}, {static_kv.shape=}", flush=True)
             result = torch.cat([x, static_kv], dim=1)
+
         elif self.step_level == 1:
-            # 恢复（从CPU转回GPU，使用双流流水线或naive方式）
+            # 恢复 medium + static
             if self.offload_manager is not None:
                 medium_kv = self.offload_manager.fetch(f"m_kv_{state_key}")
                 static_kv = self.offload_manager.fetch(f"s_kv_{state_key}")
@@ -450,91 +429,22 @@ class MaskManager:
                 static_kv = self.static_cache[state_key]
                 
             if layer_idx == 20:
-                print(f"{get_timestep()} | Fetch from {state_key}, {static_kv.shape=} {medium_kv.shape=}", flush=True)
+                print(f"{get_timestep()} | Fetch from {state_key}, {static_kv.shape=}, {static_kv[0][2][:5]=}", flush=True)
+
             result = torch.cat([x, medium_kv, static_kv], dim=1)
             
         return result.reshape(B, -1, N, D)
     
-    def process_x_sequence(self, x: torch.Tensor, name: str, layer_idx: int) -> torch.Tensor:
-        if self.step_level == 0:
-            return x
-        
-        state_key = f"{name}_{layer_idx}"
-        B, S, D = x.shape
-        
-        if self.step_level == 3:     
-            static_data = x[:, self.static_bool_mask, :]
-            medium_data = x[:, self.medium_bool_mask, :]
-            
-            if self.offload_manager is not None:
-                self.offload_manager.store_async(static_data, f"s_x_{state_key}")
-                self.offload_manager.store_async(medium_data, f"m_x_{state_key}")
-            elif self.offload_kv:
-                self.static_cache[state_key] = static_data.cpu()
-                self.medium_cache[state_key] = medium_data.cpu()
-            else:
-                self.static_cache[state_key] = static_data
-                self.medium_cache[state_key] = medium_data
-            if get_timestep() == GlobalEnv.get_envs("warmup_steps") + 1:
-                print(f"Stored {state_key}, {x.shape=}, "
-                    f"tensor_MiB={x.element_size() * x.nelement() >> 20}, " # >>20，右移20位，Byte转换为MB
-                    f"cuda_reserved_MiB={torch.cuda.memory_reserved() >> 20}, "
-                    f"cuda_allocated_MiB={torch.cuda.memory_allocated() >> 20}", flush=True)
-            result = x
-        elif self.step_level == 2:
-            # 存储
-            medium_data = x[:, self.medium_bool_mask_in_l2, :]
-            if self.offload_manager is not None:
-                self.offload_manager.store_async(medium_data, f"m_x_{state_key}")
-            elif self.offload_kv:
-                self.medium_cache[state_key] = medium_data.cpu()
-            else:
-                self.medium_cache[state_key] = medium_data
-                
-            # 恢复
-            if self.offload_manager is not None:
-                static_kv = self.offload_manager.fetch(f"s_x_{state_key}")
-                if static_kv is None:
-                    raise RuntimeError(f"[OffloadManager] Cache miss for key s_x_{state_key}")
-            elif self.offload_kv:
-                static_kv = self.static_cache[state_key].cuda()
-            else:
-                static_kv = self.static_cache[state_key]
-                
-            if layer_idx == 20:
-                print(f"{get_timestep()} | Fetch from {state_key}, {static_kv.shape=}", flush=True)
-            result = torch.cat([x, static_kv], dim=1)
-        elif self.step_level == 1:
-            # 恢复
-            if self.offload_manager is not None:
-                medium_kv = self.offload_manager.fetch(f"m_x_{state_key}")
-                static_kv = self.offload_manager.fetch(f"s_x_{state_key}")
-                if medium_kv is None or static_kv is None:
-                    raise RuntimeError(
-                        f"[OffloadManager] Cache miss for keys "
-                        f"m_x_{state_key} or s_x_{state_key}"
-                    )
-            elif self.offload_kv:
-                medium_kv = self.medium_cache[state_key].cuda()
-                static_kv = self.static_cache[state_key].cuda()
-            else:
-                medium_kv = self.medium_cache[state_key]
-                static_kv = self.static_cache[state_key]
-                
-            if layer_idx == 20:
-                print(f"{get_timestep()} | Fetch from {state_key}, {static_kv.shape=} {medium_kv.shape=}", flush=True)
-            result = torch.cat([x, medium_kv, static_kv], dim=1)
-            
-        return result.reshape(B, -1, D)
-
     def clear_frozen_states(self):
         """清理frozen状态并重置内存统计"""
         self.static_cache.clear()
         self.medium_cache.clear()
         if self.offload_manager is not None:
             self.offload_manager.clear()
+            print("[MaskManager] Cleared all offload buffers and caches", flush=True)
         torch.cuda.reset_peak_memory_stats()
         self.max_memory = 0
+        self.memory_tracker = MemoryTracker()  # 重置内存跟踪器
     
     def get_seq_len(self)->int:
         if self.step_level == 0 or self.step_level == 3:
@@ -544,39 +454,46 @@ class MaskManager:
         elif self.step_level == 1:
             return self.active_seqlen
         
-    def _get_prefetch_keys(self, cond: str) -> List[str]:
-        """Return offload-manager keys that need to be prefetched for the current step_level."""
-        keys: List[str] = []
+    def _get_prefetch_key_groups(self, cond: str) -> List[List[str]]:
+        """
+        返回按层排列的 KV offload key 分组，供滑动窗口预取使用。
+
+        每个子列表对应一层：
+          step_level==2：仅 static KV → [s_kv_{cond}_{i}]
+          step_level==1：static + medium KV → [s_kv_{cond}_{i}, m_kv_{cond}_{i}]
+
+        x 序列不走 offload，不出现在 key_groups 中。
+        """
+        groups: List[List[str]] = []
         for i in range(self.num_layers):
             state_key = f"{cond}_{i}"
+            layer_keys: List[str] = []
             if self.step_level in (1, 2):
-                keys.append(f"s_kv_{state_key}")
-                keys.append(f"s_x_{state_key}")
+                layer_keys.append(f"s_kv_{state_key}")
             if self.step_level == 1:
-                keys.append(f"m_kv_{state_key}")
-                keys.append(f"m_x_{state_key}")
-        return keys
+                layer_keys.append(f"m_kv_{state_key}")
+            if layer_keys:
+                groups.append(layer_keys)
+        return groups
 
     def update_step_level(self):
-        # Clean up staging buffers from previous step
-        if self.offload_manager is not None:
-            self.offload_manager.end_fetch_step()
-            
         timestep = get_timestep()
+
         if timestep is None or timestep <= self.warmup_steps \
             or timestep > self.num_inference_steps - self.cooldown_steps \
             or self.static_interval * self.medium_interval == 0:
-            self.step_level =  0 # full compute wo update
-        elif (timestep-self.warmup_steps-1) % self.static_interval == 0:
-            self.step_level = 3 # full compute w update
-        elif (timestep-self.warmup_steps-1) % self.medium_interval == 0:
-            self.step_level = 2 # medium compute
-        else: 
-            self.step_level = 1 # active compute
+            self.step_level = 0  # full compute wo update
+        elif (timestep - self.warmup_steps - 1) % self.static_interval == 0:
+            self.step_level = 3  # full compute w update
+        elif (timestep - self.warmup_steps - 1) % self.medium_interval == 0:
+            self.step_level = 2  # medium compute
+        else:
+            self.step_level = 1  # active compute
 
-        # Issue all CPU→GPU prefetches at the start of a fetch step so that
-        # the DMA engine can overlap transfers with GPU compute.
-        if self.offload_manager is not None and self.step_level in (1, 2):
+        # Fetch 预取：只在 warmup 完成后、需要从 offload 读取的 step 触发
+        if (self.offload_manager is not None
+                and len(self.offload_manager._pinned) > 0
+                and self.step_level in (1, 2)):
             try:
                 cond = str(GlobalEnv.get_envs("cond"))
             except KeyError:
@@ -586,23 +503,46 @@ class MaskManager:
                     "defaulting to '0' for prefetch key generation.",
                     flush=True,
                 )
-            keys = self._get_prefetch_keys(cond)
-            self.offload_manager.begin_fetch_step(keys)
+            key_groups = self._get_prefetch_key_groups(cond)
+            self.offload_manager.begin_fetch_step(key_groups)
 
-        self.print_memory_stats()
+        # 更新内存统计
+        self._update_memory_stats()
+    
+    def _update_memory_stats(self):
+        """每5步/rank0 打印一行关键运行状态。"""
+        timestep = get_timestep() or 0
+        if timestep % 5 != 0 and timestep > 3 and self.step_level != 3:
+            return
+
+        om = self.offload_manager
+        if om is not None and len(om._pinned) > 0:
+            s = om.memory_stats()
+            cpu_gb  = s["cpu_pinned_bytes"]        / 1024**3
+            fgpu_gb = s["gpu_fetch_staging_bytes"] / 1024**3
+            sgpu_gb = s["gpu_store_staging_bytes"] / 1024**3
+            alloc   = s["gpu_allocated_bytes"]     / 1024**3
+            peak    = s["gpu_peak_bytes"]          / 1024**3
+            print(
+                f"[Step {timestep:3d}|L{self.step_level}] "
+                f"GPU alloc {alloc:.2f}GB  peak {peak:.2f}GB | "
+                f"offload  CPU {cpu_gb:.2f}GB  "
+                f"fetch-stg {fgpu_gb:.2f}GB  store-stg {sgpu_gb:.2f}GB  "
+                f"saved {max(0.0, cpu_gb - fgpu_gb - sgpu_gb):.2f}GB",
+                flush=True,
+            )
+        else:
+            alloc = torch.cuda.memory_allocated() / 1024**3
+            peak  = torch.cuda.max_memory_allocated() / 1024**3
+            print(
+                f"[Step {timestep:3d}|L{self.step_level}] "
+                f"GPU alloc {alloc:.2f}GB  peak {peak:.2f}GB",
+                flush=True,
+            )
     
     def print_memory_stats(self):
-        """打印当前GPU内存使用情况"""
-        current_memory = torch.cuda.memory_allocated()
-        max_memory = torch.cuda.max_memory_allocated()
-        self.max_memory = max(self.max_memory, current_memory)
-        
-        print(f"step {get_timestep()} | GPU Memory Stats:")
-        print(f"  Current Memory: {format_memory(current_memory)}")
-        print(f"  Peak Memory: {format_memory(max_memory)}")
-        print(f"  Session Peak Memory: {format_memory(self.max_memory)}", flush=True)
-        if self.offload_manager is not None:
-            self.offload_manager.print_memory_stats()
+        """保留原有接口兼容性，但使用新的统计方式"""
+        self._update_memory_stats()
 
 # ================================ APIs =================================
         
@@ -628,7 +568,7 @@ def init_mask_manager(patch_size, seq_len, num_inference_steps, layer_num,
     offload_manager: Optional[OffloadManager] = None
     if offload and torch.cuda.is_available():
         from jano.offload_manager import init_offload_manager
-        offload_manager = init_offload_manager(layer_num)
+        offload_manager = init_offload_manager()
 
     mask_manager = MaskManager(patch_size, seq_len, num_inference_steps, layer_num,
                                offload_manager=offload_manager)

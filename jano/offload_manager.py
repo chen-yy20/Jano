@@ -1,326 +1,370 @@
 """
 Dual-Stream Prefetch Offload Manager for Jano
 
-This module provides a modular OffloadManager that any Jano model can use to
-offload cached feature/KV tensors from GPU to CPU, and efficiently prefetch
-them back using a dual-stream pipeline that overlaps data transfers with GPU
-compute.
+设计原则
+--------
+Warmup结束后模型层数、moderate/static的shape完全确定，因此：
 
-Core design
------------
-* CPU side  : page-locked (pinned) memory buffers per cache entry, enabling
-              maximum-bandwidth DMA transfers.
-* GPU side  : a staging buffer per cache entry that receives the prefetched
-              data from the DMA engine.
-* data_stream   : dedicated CUDA stream for all H2D / D2H copies.
-* default stream: used for compute (the caller's stream, typically the
-                  autocast/no_grad context).
-* CUDA Events   : per-entry events recorded on the data_stream after each
-                  prefetch; the compute stream calls wait_event before
-                  consuming the staging buffer.
+CPU Pinned Memory（持久，预分配）
+    key = f"{state_key}_{kv_type}"   e.g. "cond_0_5_s_kv", "cond_1_5_m_kv"
+    每层每类型一个pinned buffer，warmup结束后一次性分配
+    总量固定，DMA直接访问，无运行时内存分配开销
 
-Pipeline (for a fetch step with N layers)
-------------------------------------------
-  begin_fetch_step(keys)           # issue all N prefetches on data_stream
-                                   # ↑ DMA engine runs concurrently with GPU
-  for i in range(N):
-      compute layer i ...
-      tensor_i = fetch(key_i)      # wait_event(events[key_i]) → returns
-                                   #   gpu_staging[key_i] (already populated)
+GPU Staging Buffer（循环复用，固定 k 个）
+    每种独立shape各有 k 个 fetch staging（CPU→GPU 方向）
+    每种独立shape各有 k 个 store staging（GPU→CPU 中转）
+    k（prefetch_window）越大，计算-访存重叠率越高
+    运行时不新增/释放GPU内存
 
-This overlaps CPU→GPU transfers for later layers with the GPU compute of
-earlier layers, hiding the transfer latency almost entirely.
+Prefetch策略（以k为步长的滑动窗口）
+    begin_fetch_step(key_groups) 预取前k组
+    每层第一个 fetch(key) 触发下一组的预取，与当前层计算重叠
+    任意时刻 GPU staging buffer 数量 ≤ k × keys_per_layer
+
+Store策略
+    store_async(tensor, key): tensor.detach() → store staging → pinned (DMA)
+    避免原始tensor被后续计算修改引发数据冒险
 """
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
-
 import torch
+from collections import defaultdict
+from typing import Dict, List, Optional, Tuple
 
 from utils.envs import GlobalEnv
 
 
-def _format_bytes(n: int) -> str:
+def _fmt(n: int) -> str:
     return f"{n / 1024 ** 3:.2f} GB"
+
+
+# (shape_tuple, dtype) → staging buffer pool的索引键
+_ShapeKey = Tuple[tuple, torch.dtype]
 
 
 class OffloadManager:
     """
-    Modular dual-stream prefetch offload manager.
+    按需渐进分配 + 滑动窗口预取的 Offload Manager。
 
-    Any Jano mask-manager (or model) can create one instance of this class
-    and use the three main operations:
-
-    * ``store_async(tensor, key)``  – GPU → CPU pinned (on data_stream)
-    * ``begin_fetch_step(keys)``    – issue all CPU → GPU staging prefetches
-    * ``fetch(key)``                – wait for event, return GPU staging tensor
-
-    Parameters
-    ----------
-    device : torch.device or str, optional
-        CUDA device to allocate staging buffers on. Defaults to the current
-        CUDA device.
+    使用流程
+    --------
+    1. 每个 step_level==3 步中，对每个 key 调用 register_shape(key, ...)：
+       首次调用立即完成 CPU pinned buffer、GPU staging buffers、CUDA streams/events
+       的分配；后续重复调用为幂等空操作。
+    2. register_shape() 返回后即可调用 store_async() 将 KV 写入 CPU。
+    3. step_level==1/2 时，begin_fetch_step() + fetch() 以滑动窗口方式回读。
     """
 
-    def __init__(self, device: Optional[torch.device] = None):
-        if not torch.cuda.is_available():
-            raise RuntimeError("OffloadManager requires a CUDA-capable GPU.")
+    def __init__(
+        self,
+        device: Optional[torch.device] = None,
+        prefetch_window: int = 1,
+    ):
+        # 设备延迟确定：__init__ 时 CUDA 可能未就绪，统一用 current_device()
+        # build_pinned_buffers() 中再真正使用 self.device
+        self._device_arg = device
+        self.device: Optional[torch.device] = None  # 延迟到 build_pinned_buffers 赋值
+        self.k = prefetch_window
 
-        self.device = device or torch.device(f"cuda:{torch.cuda.current_device()}")
-
-        # Dedicated stream for all data transfers (D2H and H2D)
-        self.data_stream: torch.cuda.Stream = torch.cuda.Stream(device=self.device)
-
-        # CPU pinned-memory buffers: key → 1-D/N-D cpu tensor (pin_memory=True)
+        # ── CPU Pinned Memory ─────────────────────────────────────────────
         self._pinned: Dict[str, torch.Tensor] = {}
+        self._warmup_done: bool = False
+        # warmup 阶段收集的 shape：key → (shape, dtype)
+        self._registered: Dict[str, Tuple[tuple, torch.dtype]] = {}
 
-        # GPU staging buffer pool for reuse: (shape, dtype) → list of available buffers
-        self._staging_pool: Dict[tuple, List[torch.Tensor]] = {}
-        
-        # Currently allocated staging buffers: key → tensor
-        self._active_staging: Dict[str, torch.Tensor] = {}
+        # ── GPU Staging Buffers（固定 k 个，按 shape 分组）───────────────
+        # shape_key → List[k 个 GPU tensor]
+        self._fetch_staging: Dict[_ShapeKey, List[torch.Tensor]] = {}
+        self._store_staging: Dict[_ShapeKey, List[torch.Tensor]] = {}
+        # shape_key → 当前累计使用次数（% k 得到 slot）
+        self._fetch_slot: Dict[_ShapeKey, int] = defaultdict(int)
+        self._store_slot: Dict[_ShapeKey, int] = defaultdict(int)
 
-        # Per-key CUDA events (recorded on data_stream after each H2D copy)
-        self._events: Dict[str, torch.cuda.Event] = {}        # Set of keys whose H2D prefetch has been issued but not yet consumed
-        self._prefetch_issued: set = set()
+        # ── CUDA Streams & Events（延迟到 build_pinned_buffers 创建）──────
+        self.fetch_stream: Optional[torch.cuda.Stream] = None
+        self.store_stream: Optional[torch.cuda.Stream] = None
+        # key → CUDA event（每步 DMA 完成后 record）
+        self._fetch_events: Dict[str, torch.cuda.Event] = {}
+        self._store_events: Dict[str, torch.cuda.Event] = {}
+        # key → (sk, slot) 记录本次预取用的 staging buffer 位置
+        self._fetch_slot_map: Dict[str, Tuple[_ShapeKey, int]] = {}
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
+        # ── 滑动窗口状态（每 step 重置）───────────────────────────────────
+        self._key_groups: List[List[str]] = []
+        self._next_prefetch_group: int = 0
+        self._key_to_group_idx: Dict[str, int] = {}
 
-    def _ensure_pinned(self, tensor: torch.Tensor, key: str) -> None:
-        """Allocate / reallocate a pinned CPU buffer for *key* if needed."""
-        existing = self._pinned.get(key)
-        if existing is None or existing.shape != tensor.shape or existing.dtype != tensor.dtype:
-            self._pinned[key] = torch.empty(
-                tensor.shape, dtype=tensor.dtype, pin_memory=True, device="cpu"
-            )
+    # =========================================================================
+    # 资源分配
+    # =========================================================================
 
-    def _get_staging_buffer(self, key: str) -> torch.Tensor:
-        """Get a staging buffer from pool or create new one."""
-        pinned = self._pinned[key]
-        shape_dtype_key = (tuple(pinned.shape), pinned.dtype)
-        
-        # Try to reuse from pool
-        if shape_dtype_key in self._staging_pool and self._staging_pool[shape_dtype_key]:
-            buffer = self._staging_pool[shape_dtype_key].pop()
-            self._active_staging[key] = buffer
-            return buffer
-        
-        # Create new buffer if pool empty
-        buffer = torch.empty(pinned.shape, dtype=pinned.dtype, device=self.device)
-        self._active_staging[key] = buffer
-        return buffer
-    
-    def _return_staging_buffer(self, key: str) -> None:
-        """Return staging buffer to pool for reuse."""
-        if key not in self._active_staging:
+    def _ensure_streams(self) -> None:
+        """延迟初始化 CUDA device / streams（首次 register_shape 时调用）。"""
+        if self.fetch_stream is not None:
             return
-            
-        buffer = self._active_staging.pop(key)
-        shape_dtype_key = (tuple(buffer.shape), buffer.dtype)
-        
-        if shape_dtype_key not in self._staging_pool:
-            self._staging_pool[shape_dtype_key] = []
-        
-        # Limit pool size to prevent memory accumulation
-        if len(self._staging_pool[shape_dtype_key]) < 5:
-            self._staging_pool[shape_dtype_key].append(buffer)
-        # else: let buffer be garbage collected
+        self.device = self._device_arg or torch.device(
+            f"cuda:{torch.cuda.current_device()}"
+        )
+        self.fetch_stream = torch.cuda.Stream(device=self.device)
+        self.store_stream = torch.cuda.Stream(device=self.device)
 
-    def _ensure_staging(self, key: str) -> None:
-        """Allocate / reallocate a GPU staging buffer matching the pinned buf."""
-        if key not in self._active_staging:
-            self._get_staging_buffer(key)
-        if key not in self._events:
-            self._events[key] = torch.cuda.Event()
+    def register_shape(self, key: str, shape: tuple, dtype: torch.dtype) -> None:
+        """
+        注册 key 并立即分配 CPU pinned buffer、CUDA events 及 GPU staging buffers。
+        幂等：重复注册同一 key 不会重复分配。
+        调用后即可直接使用 store_async，无需等待 build_pinned_buffers()。
+        """
+        if key in self._registered:
+            return
+        self._ensure_streams()
+        self._registered[key] = (tuple(shape), dtype)
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+        # 立即分配 CPU pinned buffer 和 CUDA events
+        self._pinned[key] = torch.empty(shape, dtype=dtype, pin_memory=True, device="cpu")
+        self._fetch_events[key] = torch.cuda.Event()
+        self._store_events[key] = torch.cuda.Event()
+
+        # 若该 shape 尚无 staging buffers，一并分配
+        sk: _ShapeKey = (tuple(shape), dtype)
+        if sk not in self._fetch_staging:
+            self._fetch_staging[sk] = [
+                torch.empty(shape, dtype=dtype, device=self.device)
+                for _ in range(self.k)
+            ]
+            self._store_staging[sk] = [
+                torch.empty(shape, dtype=dtype, device=self.device)
+                for _ in range(self.k)
+            ]
+            self._fetch_slot[sk] = 0
+            self._store_slot[sk] = 0
+
+    def build_pinned_buffers(self) -> None:
+        """[已废弃] 历史兼容接口。register_shape() 现在立即分配所有资源，本方法为空操作。"""
+        pass
+
+    # =========================================================================
+    # Store（GPU → CPU，双流流水线）
+    # =========================================================================
 
     def store_async(self, tensor: torch.Tensor, key: str) -> None:
         """
-        Asynchronously copy *tensor* (on GPU) to a CPU pinned-memory buffer.
+        异步将 GPU tensor 存入对应的 CPU pinned buffer。
 
-        The copy is enqueued on ``self.data_stream`` and returns immediately;
-        the caller must *not* modify or free *tensor* until the data_stream
-        has advanced past this point (a stream synchronise or a later
-        event-wait is sufficient).
+        流程：
+          1. tensor.detach() 在默认流做**同步**拷贝到 store staging（隔离原始 tensor）
+          2. 在 store_stream 上从 staging async DMA 到 pinned memory
+          3. record store_events[key]
+
+        主调方无需等待，可继续计算。
+        """
+        assert key in self._pinned, f"未注册的 key: {key}，请先调用 register_shape()"
+
+        sk: _ShapeKey = (tuple(self._pinned[key].shape), self._pinned[key].dtype)
+        slot = self._store_slot[sk] % self.k
+        self._store_slot[sk] += 1
+
+        staging = self._store_staging[sk][slot]
+        pinned = self._pinned[key]
+
+        # step1: 同步拷贝到 staging（完全隔离原 tensor，避免数据冒险）
+        staging.copy_(tensor.detach(), non_blocking=False)
+
+        # step2: staging → pinned async DMA
+        # 必须让 store_stream 等待默认流（或当前计算流）上的 GPU-to-GPU 拷贝完成
+        self.store_stream.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(self.store_stream):
+            pinned.copy_(staging, non_blocking=True)
+            self._store_events[key].record(self.store_stream)
+
+    def wait_store(self, key: str) -> None:
+        """阻塞等待指定 key 的 store DMA 完成。"""
+        self._store_events[key].synchronize()
+
+    # =========================================================================
+    # Fetch（CPU → GPU，滑动窗口预取）
+    # =========================================================================
+
+    def begin_fetch_step(self, key_groups: List[List[str]]) -> None:
+        """
+        每个推理 step 的 fetch 阶段开始时调用。
 
         Parameters
         ----------
-        tensor : torch.Tensor
-            GPU tensor to store.
-        key : str
-            Unique identifier for this cache entry.
+        key_groups : List[List[str]]
+            按层排列的 key 分组，index i 对应第 i 层。
+            例：[["cond0_0_s_kv","cond0_0_m_kv"], ["cond0_1_s_kv","cond0_1_m_kv"], ...]
+
+        行为：重置窗口状态，预取前 k 组；其余组由 fetch() 触发。
         """
-        self._ensure_pinned(tensor, key)
-        with torch.cuda.stream(self.data_stream):
-            self._pinned[key].copy_(tensor, non_blocking=True)
+        self._key_groups = key_groups
+        self._next_prefetch_group = 0
+        self._fetch_slot_map.clear()
 
-    def begin_fetch_step(self, keys: List[str]) -> None:
+        # 构建 key → group_idx 映射，O(1) 查找
+        self._key_to_group_idx = {
+            key: g_idx
+            for g_idx, group in enumerate(key_groups)
+            for key in group
+        }
+
+        # 重置 fetch slot（每 step 从 0 开始，保证循环复用正确）
+        for sk in self._fetch_slot:
+            self._fetch_slot[sk] = 0
+
+        # 预取前 k 组
+        for _ in range(min(self.k, len(key_groups))):
+            self._issue_prefetch_group(self._next_prefetch_group)
+            self._next_prefetch_group += 1
+
+    def _issue_prefetch_group(self, group_idx: int) -> None:
+        """在 fetch_stream 上为第 group_idx 层的所有 key 发起异步 H2D DMA。"""
+        if group_idx < 0 or group_idx >= len(self._key_groups):
+            return
+        
+        # 必须让 fetch_stream 等待计算流到当前时刻，以防它跑得太快覆盖正在计算的 buffer
+        self.fetch_stream.wait_stream(torch.cuda.current_stream())
+
+        with torch.cuda.stream(self.fetch_stream):
+            for key in self._key_groups[group_idx]:
+                if key not in self._pinned:
+                    continue
+                sk: _ShapeKey = (
+                    tuple(self._pinned[key].shape),
+                    self._pinned[key].dtype,
+                )
+                slot = self._fetch_slot[sk] % self.k
+                self._fetch_slot[sk] += 1
+                staging = self._fetch_staging[sk][slot]
+                staging.copy_(self._pinned[key], non_blocking=True)
+                self._fetch_events[key].record(self.fetch_stream)
+                # 记录 (sk, slot)，fetch() 时据此找到 staging buffer
+                self._fetch_slot_map[key] = (sk, slot)
+
+    def fetch(self, key: str) -> torch.Tensor:
         """
-        Issue async H2D prefetches for all *keys* at the start of a fetch
-        step.
+        等待 key 的预取 DMA 完成，返回 GPU staging buffer。
 
-        Enqueuing all copies at once lets the DMA engine saturate the PCIe
-        bandwidth while GPU compute proceeds through the transformer layers.
-        Each copy records a per-key CUDA event on the data_stream; the
-        ``fetch`` method will wait for that event on the compute stream.
-
-        Parameters
-        ----------
-        keys : list of str
-            Cache keys to prefetch.  Keys not yet stored are silently skipped.
+        顺序：
+          1. Fallback（如未预取则先发起）
+          2. wait_event：计算流等待 H2D DMA 完成
+          3. 触发下一组预取（此时 staging 已被计算流"接管"，
+             下一组可安全写入其他 slot）
         """
-        for key in keys:
-            if key not in self._pinned:
-                continue
-            self._ensure_staging(key)
-            with torch.cuda.stream(self.data_stream):
-                staging_buffer = self._active_staging[key]
-                staging_buffer.copy_(self._pinned[key], non_blocking=True)
-                self._events[key].record()
-            self._prefetch_issued.add(key)
+        assert key in self._pinned, f"未注册的 key: {key}"
 
-    def fetch(self, key: str) -> Optional[torch.Tensor]:
-        """
-        Return the GPU staging buffer for *key*, blocking the current
-        (compute) stream until the prefetch completes.
+        # Fallback：key 未被正常预取时，同步发起
+        if key not in self._fetch_slot_map:
+            self._issue_prefetch_fallback(key)
 
-        If ``begin_fetch_step`` was not called for this key, a synchronous
-        fallback prefetch is issued here (no overlap, but functionally
-        correct).
+        # 先等待：计算流阻塞直到 DMA 完成，确保 staging 数据有效
+        torch.cuda.current_stream().wait_event(self._fetch_events[key])
 
-        Parameters
-        ----------
-        key : str
-            Cache key previously passed to ``store_async``.
+        # 再触发：staging 已就绪后，窗口滑动，下一组预取不与当前读冲突。
+        # 条件：当前 key 是所在 group 的第一个 key，避免同一 group 内多次触发。
+        # 注意 fetch_stream.wait_stream(current_stream) 在 _issue_prefetch_group 内部
+        # 会等待 current_stream 上已入队的所有工作（包括上一层的 torch.cat），
+        # 因此 k≥2 时不存在 DMA 覆盖正在读取的 staging buffer 的风险。
+        # k=1 时 H2D PCIe DMA 调度延迟 >> GPU torch.cat，实践中同样安全。
+        group_idx = self._find_group(key)
+        if group_idx >= 0 and self._key_groups[group_idx][0] == key:
+            self._issue_prefetch_group(self._next_prefetch_group)
+            self._next_prefetch_group += 1
 
-        Returns
-        -------
-        torch.Tensor or None
-            The GPU staging buffer (same shape/dtype as the original stored
-            tensor), or *None* if the key was never stored.
-        """
-        if key not in self._pinned:
-            return None
+        sk, slot = self._fetch_slot_map[key]
+        return self._fetch_staging[sk][slot]
 
-        # Fallback: issue prefetch now if not already in flight
-        if key not in self._prefetch_issued:
-            self._ensure_staging(key)
-            with torch.cuda.stream(self.data_stream):
-                staging_buffer = self._active_staging[key]
-                staging_buffer.copy_(self._pinned[key], non_blocking=True)
-                self._events[key].record()
-            self._prefetch_issued.add(key)
+    def _issue_prefetch_fallback(self, key: str) -> None:
+        """在 fetch_stream 上为单个 key 发起预取（fallback，开销略高）。"""
+        print(f"[OffloadManager] Fallback prefetch for key: {key}", flush=True)
+        sk: _ShapeKey = (tuple(self._pinned[key].shape), self._pinned[key].dtype)
+        slot = self._fetch_slot[sk] % self.k
+        self._fetch_slot[sk] += 1
+        staging = self._fetch_staging[sk][slot]
+        
+        # 同样需要等待计算流，避免覆盖正在被计算流使用的数据
+        self.fetch_stream.wait_stream(torch.cuda.current_stream())
+        
+        with torch.cuda.stream(self.fetch_stream):
+            staging.copy_(self._pinned[key], non_blocking=True)
+            self._fetch_events[key].record(self.fetch_stream)
+        self._fetch_slot_map[key] = (sk, slot)
 
-        # Make the compute stream wait for the DMA to finish
-        torch.cuda.current_stream().wait_event(self._events[key])
-        self._prefetch_issued.discard(key)
-
-        return self._active_staging[key]
+    def _find_group(self, key: str) -> int:
+        """O(1) 返回 key 所在 group 索引，找不到返回 -1。"""
+        return self._key_to_group_idx.get(key, -1)
 
     def has_key(self, key: str) -> bool:
-        """Return True if *key* has been stored."""
         return key in self._pinned
 
-    def end_fetch_step(self) -> None:
-        """
-        Release all active staging buffers back to the pool after compute step completes.
-        Should be called after all fetch() operations in a step are finished.
-        """
-        for key in list(self._active_staging.keys()):
-            self._return_staging_buffer(key)
-    
-    def clear(self) -> None:
-        """
-        Release all pinned-memory and GPU staging buffers.
+    # =========================================================================
+    # Memory Stats
+    # =========================================================================
 
-        Should be called at the end of an inference session (e.g. after all
-        denoising steps) to free resources.
-        """
-        self._pinned.clear()
-        self._active_staging.clear()
-        self._staging_pool.clear()
-        self._events.clear()
-        self._prefetch_issued.clear()
+    def memory_stats(self) -> dict:
+        cpu_bytes = sum(t.nbytes for t in self._pinned.values())
+        gpu_fetch = sum(
+            t.nbytes for bufs in self._fetch_staging.values() for t in bufs
+        )
+        gpu_store = sum(
+            t.nbytes for bufs in self._store_staging.values() for t in bufs
+        )
+        gpu_allocated = torch.cuda.memory_allocated(self.device)
+        gpu_peak = torch.cuda.max_memory_allocated(self.device)
+        return {
+            "cpu_pinned_bytes": cpu_bytes,
+            "gpu_fetch_staging_bytes": gpu_fetch,
+            "gpu_store_staging_bytes": gpu_store,
+            "gpu_allocated_bytes": gpu_allocated,
+            "gpu_peak_bytes": gpu_peak,
+        }
 
-    def print_memory_stats(self) -> None:
-        """Print the total size of all pinned CPU and GPU staging buffers, along with real-time system memory usage."""
-        # Cache statistics
-        cpu_total = sum(
-            t.element_size() * t.numel() for t in self._pinned.values()
-        )
-        gpu_total = sum(
-            t.element_size() * t.numel() for t in self._active_staging.values()
-        )
-        
-        # Pool statistics
-        pool_total = sum(
-            sum(t.element_size() * t.numel() for t in buffers)
-            for buffers in self._staging_pool.values()
-        )
-        
-        # Real-time GPU memory
-        gpu_allocated = torch.cuda.memory_allocated(self.device) 
-        gpu_reserved = torch.cuda.memory_reserved(self.device)
-        gpu_max_allocated = torch.cuda.max_memory_allocated(self.device)
-        
-        # Real-time CPU memory (requires psutil if available)
-        cpu_memory_info = ""
-        try:
-            import psutil
-            process = psutil.Process()
-            cpu_memory_gb = process.memory_info().rss / 1024**3
-            cpu_memory_info = f", CPU process: {cpu_memory_gb:.2f} GB"
-        except ImportError:
-            cpu_memory_info = ", CPU process: N/A (install psutil)"
-        
+    def print_stats(self) -> None:
+        s = self.memory_stats()
         print(
-            f"[OffloadManager] Cache - pinned CPU: {_format_bytes(cpu_total)}, "
-            f"GPU active: {_format_bytes(gpu_total)}, "
-            f"GPU pool: {_format_bytes(pool_total)} | "
-            f"GPU - allocated: {_format_bytes(gpu_allocated)}, "
-            f"reserved: {_format_bytes(gpu_reserved)}, "
-            f"max: {_format_bytes(gpu_max_allocated)}{cpu_memory_info}",
+            f"[OffloadManager] "
+            f"CPU pinned: {_fmt(s['cpu_pinned_bytes'])} | "
+            f"GPU fetch staging: {_fmt(s['gpu_fetch_staging_bytes'])} | "
+            f"GPU store staging: {_fmt(s['gpu_store_staging_bytes'])} | "
+            f"GPU allocated: {_fmt(s['gpu_allocated_bytes'])} | "
+            f"GPU peak: {_fmt(s['gpu_peak_bytes'])}",
             flush=True,
         )
 
+    def clear(self) -> None:
+        """释放所有 pinned memory（推理结束后调用）。"""
+        self._pinned.clear()
+        self._registered.clear()
+        self._fetch_staging.clear()
+        self._store_staging.clear()
+        self._fetch_events.clear()
+        self._store_events.clear()
+        self._fetch_slot_map.clear()
+        self._key_groups = []
+        self._key_to_group_idx = {}
+        self._next_prefetch_group = 0
+        self._warmup_done = False
+        self.device = None
+        self.fetch_stream = None
+        self.store_stream = None
+
 
 # ---------------------------------------------------------------------------
-# Module-level singleton helpers (mirrors the pattern used by other managers)
+# Module-level singleton
 # ---------------------------------------------------------------------------
 
 _OFFLOAD_MANAGER: Optional[OffloadManager] = None
 
 
-def init_offload_manager(num_layers: int = 0, device: Optional[torch.device] = None) -> OffloadManager:
-    """
-    Create and register the global OffloadManager instance.
-
-    Parameters
-    ----------
-    num_layers : int, optional
-        Kept for API compatibility; not used by OffloadManager internally.
-    device : torch.device, optional
-        CUDA device for staging buffers.
-
-    Returns
-    -------
-    OffloadManager
-    """
+def init_offload_manager(
+    device: Optional[torch.device] = None,
+    prefetch_window: int = 4,
+    layer_num: int = 0,   # 兼容旧调用，内部不使用
+) -> OffloadManager:
     global _OFFLOAD_MANAGER
-    _OFFLOAD_MANAGER = OffloadManager(device=device)
-    GlobalEnv.set_envs("offload_manager", _OFFLOAD_MANAGER)
+    _OFFLOAD_MANAGER = OffloadManager(device=device, prefetch_window=prefetch_window)
     return _OFFLOAD_MANAGER
 
 
 def get_offload_manager() -> Optional[OffloadManager]:
-    """
-    Return the global OffloadManager instance, or *None* if not initialised.
-    """
-    global _OFFLOAD_MANAGER
     return _OFFLOAD_MANAGER

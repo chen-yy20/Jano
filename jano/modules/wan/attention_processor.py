@@ -168,8 +168,6 @@ class WanSelfAttention_jano(nn.Module):
         self.qk_norm = qk_norm
         self.eps = eps
         self.layer_idx = layer_idx
-            
-        self.cache_x = GlobalEnv.get_envs("memory_efficient_cache")     
 
         # layers
         self.q = nn.Linear(dim, dim)
@@ -194,24 +192,19 @@ class WanSelfAttention_jano(nn.Module):
         # query, key, value function
         def qkv_fn(x):
             q = self.norm_q(self.q(x)).view(b, s, n, d)
-            if self.cache_x:
-                x = mm.process_x_sequence(x, GlobalEnv.get_envs("cond"), self.layer_idx)
-                s1 = x.shape[1]
-            else:
-                s1 = s
-            k = self.norm_k(self.k(x)).view(b, s1, n, d)
-            v = self.v(x).view(b, s1, n, d)
+            k = self.norm_k(self.k(x)).view(b, s, n, d)
+            v = self.v(x).view(b, s, n, d)
             return q, k, v
 
         q, k, v = qkv_fn(x)
         q = adaptive_rope_apply(q, grid_sizes, freqs, cache_x=False)
-        k = adaptive_rope_apply(k, grid_sizes, freqs, cache_x=self.cache_x)
+        k = adaptive_rope_apply(k, grid_sizes, freqs, cache_x=False)
 
-        if not self.cache_x and mm is not None:
+        if mm is not None:
             k, v = mm.process_kv_sequence(
-                kv = torch.cat([k, v]),
-                name = GlobalEnv.get_envs("cond"),
-                layer_idx=self.layer_idx
+                kv=torch.cat([k, v]),
+                name=GlobalEnv.get_envs("cond"),
+                layer_idx=self.layer_idx,
             ).chunk(2, dim=0)
                 
 
