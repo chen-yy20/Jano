@@ -266,6 +266,7 @@ class WanT2V_jano:
                     
                     self.model.to(self.device)
                     
+                    mask_manager.update_step_level()
                     # 2卡并行代码，cfg parallelism.
                     if get_cp_worldsize() == 2:
                         if get_cp_group().rank_in_group == 0:

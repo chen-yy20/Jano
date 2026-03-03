@@ -13,7 +13,6 @@ CPU Pinned Memory（持久，预分配）
 GPU Staging Buffer（循环复用，固定 k 个）
     每种独立shape各有 k 个 fetch staging（CPU→GPU 方向）
     每种独立shape各有 k 个 store staging（GPU→CPU 中转）
-    k（prefetch_window）越大，计算-访存重叠率越高
     运行时不新增/释放GPU内存
 
 Prefetch策略（以k为步长的滑动窗口）
@@ -358,7 +357,7 @@ _OFFLOAD_MANAGER: Optional[OffloadManager] = None
 
 def init_offload_manager(
     device: Optional[torch.device] = None,
-    prefetch_window: int = 4,
+    prefetch_window: int = 1,
     layer_num: int = 0,   # 兼容旧调用，内部不使用
 ) -> OffloadManager:
     global _OFFLOAD_MANAGER

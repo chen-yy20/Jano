@@ -600,7 +600,6 @@ class WanModel(ModelMixin, ConfigMixin):
         if mask_manager is None:
             GlobalEnv.set_envs("timer_prefix", "full")
         else:
-            mask_manager.update_step_level()
             level = mask_manager.step_level
             if level == 0:
                 GlobalEnv.set_envs("timer_prefix", "full")

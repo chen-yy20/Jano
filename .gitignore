@@ -4,6 +4,7 @@ wan_bckup
 *.log
 *.pt
 *.npz
+*.json
 note.md
 wan_results/
 evaluation

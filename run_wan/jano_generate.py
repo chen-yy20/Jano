@@ -58,7 +58,7 @@ STATIC_THRESH = 0.2
 MEDIUM_THRESH = 0.6
 WARMUP = 6
 ENABLE_JANO = 1
-OFFLOAD_KV = 1
+OFFLOAD_KV = 0
 
 TAG = f"jano_offload{OFFLOAD_KV}" if ENABLE_JANO else "ori"
 model_id = "1.3B" if "1.3B" in MODEL_PATH else "14B"
