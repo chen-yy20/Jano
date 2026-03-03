@@ -33,8 +33,8 @@ from utils.quality_metric import evaluate_quality_with_origin
 # 主体
 # PROMPT = "Two cats standing still on a spotlighted stage."
 # PROMPT = "Two cats in comfy boxing gear and bright gloves standing still on a spotlighted stage."
-PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
-# PROMPT = "Hare in snow."
+# PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
+PROMPT = "Hare in snow."
 # PROMPT = "Two beetles traverse dew-heavy moss, droplets popping free and rolling downhill as antennae test the carpeted route."
 # 高动态
 # PROMPT = "A couple in formal evening wear going home get caught in a heavy downpour with umbrellas, zoom in"
@@ -58,7 +58,7 @@ STATIC_THRESH = 0.2
 MEDIUM_THRESH = 0.6
 WARMUP = 6
 ENABLE_JANO = 1
-OFFLOAD_KV = 0
+OFFLOAD_KV = 1
 
 TAG = f"jano_offload{OFFLOAD_KV}" if ENABLE_JANO else "ori"
 model_id = "1.3B" if "1.3B" in MODEL_PATH else "14B"

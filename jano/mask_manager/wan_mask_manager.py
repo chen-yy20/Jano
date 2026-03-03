@@ -149,7 +149,13 @@ class MaskManager:
         self.medium_cache = {}
         self.static_cache = {}
         
-        self.restored_x = None
+        # Per-cond restored_x buffers: keyed by the `name` argument passed to
+        # process_masked_output (e.g. "output_c0", "output_c1").  Using a
+        # single tensor was a bug: in 1-GPU mode the cond=0 and cond=1 forward
+        # passes share the same MaskManager, so the L3 output of cond=1 would
+        # overwrite the buffer and contaminate the cond=0 L1 result with the
+        # wrong medium/static tokens.
+        self.restored_x_dict: Dict[str, Optional[torch.Tensor]] = {}
         
         self.block_mask = None
         self.latent_mask = None
@@ -326,7 +332,10 @@ class MaskManager:
         return x[:, sequence_mask, ...]  # ...会自动处理剩余维度
 
     def process_masked_output(self, x: torch.Tensor, name: str, layer_idx: int) -> torch.Tensor:
-        """将本步计算出的局部 token 写回到 restored_x（全序列 GPU tensor）。
+        """将本步计算出的局部 token 写回到 per-cond restored_x（全序列 GPU tensor）。
+
+        每个 cond（name）独立维护一个 restored_x，避免 1-GPU 模式下 cond=0 和
+        cond=1 共用同一缓冲区导致 medium/static token 相互污染。
 
         restored_x 在步间持久保留：
           step_level 3 → 全部 token 重新计算，直接替换
@@ -335,29 +344,31 @@ class MaskManager:
         无需额外 cache，只做 scatter-write。
         """
         if self.step_level == 0:
-            self.restored_x = x
+            self.restored_x_dict[name] = x
             return x
         if self.get_seq_len() == 0:
-            return self.restored_x
+            return self.restored_x_dict.get(name)
 
-        if self.restored_x is None:
+        if self.restored_x_dict.get(name) is None:
             B, _, D = x.shape
-            self.restored_x = torch.zeros(
+            self.restored_x_dict[name] = torch.zeros(
                 B, self.full_seq_len, D, device=x.device, dtype=x.dtype
             )
 
+        restored = self.restored_x_dict[name]
         if self.step_level == 3:
-            self.restored_x = x
+            self.restored_x_dict[name] = x
         elif self.step_level == 2:
-            self.restored_x[:, ~self.static_bool_mask, :] = x
+            restored[:, ~self.static_bool_mask, :] = x
         elif self.step_level == 1:
-            self.restored_x[:, self.active_mask, :] = x
-        return self.restored_x
+            restored[:, self.active_mask, :] = x
+        return self.restored_x_dict[name]
         
     def process_kv_sequence(self, kv: torch.Tensor, name: str, layer_idx: int) -> torch.Tensor:
         if self.step_level == 0:
             return kv
-        
+
+        name = str(name)   # GlobalEnv.get_envs("cond") 返回 int，统一转 str
         state_key = f"{name}_{layer_idx}"
         B, S, N, D = kv.shape
         x = kv.reshape(B, S, -1)
@@ -370,15 +381,19 @@ class MaskManager:
                 print(f"{get_timestep()} | Store to {state_key}, {static_data.shape=}, {static_data[0][2][:5]=}", flush=True)
 
             if self.offload_manager is not None:
-                # register_shape 幂等：首次调用时立即分配 pinned buffer，后续调用为空操作
-                self.offload_manager.register_shape(
-                    f"s_kv_{state_key}", tuple(static_data.shape), static_data.dtype
-                )
-                self.offload_manager.register_shape(
-                    f"m_kv_{state_key}", tuple(medium_data.shape), medium_data.dtype
-                )
-                self.offload_manager.store_async(static_data, f"s_kv_{state_key}")
-                self.offload_manager.store_async(medium_data, f"m_kv_{state_key}")
+                om = self.offload_manager
+                # layer_idx==0 时启动后台线程预分配两块 pool（与当前层 GPU 计算重叠）
+                if layer_idx == 0:
+                    om.start_preallocate(
+                        name,
+                        self.num_layers,
+                        tuple(static_data.shape),
+                        static_data.dtype,
+                        tuple(medium_data.shape),
+                        medium_data.dtype,
+                    )
+                om.store_async(static_data, layer_idx, 's', name)
+                om.store_async(medium_data, layer_idx, 'm', name)
                 del static_data, medium_data
             elif self.offload_kv:
                 self.static_cache[state_key] = static_data.cpu()
@@ -392,7 +407,8 @@ class MaskManager:
             # 存储 medium（当前帧 medium+active tokens → CPU）
             medium_data = x[:, self.medium_bool_mask_in_l2, :]
             if self.offload_manager is not None:
-                self.offload_manager.store_async(medium_data, f"m_kv_{state_key}")
+                om = self.offload_manager
+                om.store_async(medium_data, layer_idx, 'm', name)
                 del medium_data
             elif self.offload_kv:
                 self.medium_cache[state_key] = medium_data.cpu()
@@ -401,9 +417,9 @@ class MaskManager:
                 
             # 恢复 static（从 CPU fetch 回 GPU）
             if self.offload_manager is not None:
-                static_kv = self.offload_manager.fetch(f"s_kv_{state_key}")
-                if static_kv is None:
-                    raise RuntimeError(f"[OffloadManager] Cache miss for key s_kv_{state_key}")
+                static_kv = om.fetch(layer_idx, 's', name)
+                if layer_idx == 20:
+                    print(f"{get_timestep()} | [L2] Fetch static from {state_key}, {static_kv.shape=}, {static_kv[0][2][:5]=}", flush=True)
             elif self.offload_kv:
                 static_kv = self.static_cache[state_key].cuda()
             else:
@@ -414,13 +430,9 @@ class MaskManager:
         elif self.step_level == 1:
             # 恢复 medium + static
             if self.offload_manager is not None:
-                medium_kv = self.offload_manager.fetch(f"m_kv_{state_key}")
-                static_kv = self.offload_manager.fetch(f"s_kv_{state_key}")
-                if medium_kv is None or static_kv is None:
-                    raise RuntimeError(
-                        f"[OffloadManager] Cache miss for keys "
-                        f"m_kv_{state_key} or s_kv_{state_key}"
-                    )
+                om = self.offload_manager
+                medium_kv = om.fetch(layer_idx, 'm', name)
+                static_kv  = om.fetch(layer_idx, 's', name)
             elif self.offload_kv:
                 medium_kv = self.medium_cache[state_key].cuda()
                 static_kv = self.static_cache[state_key].cuda()
@@ -435,10 +447,24 @@ class MaskManager:
             
         return result.reshape(B, -1, N, D)
     
+    def begin_cond_fetch(self, cond: str) -> None:
+        """在每次 model forward 之前调用，为指定 cond 设置预取。
+
+        必须在 GlobalEnv.set_envs("cond", ...) 已设置正确值之后、model forward 之前调用。
+        这样可以保证 staging buffer 中预取的是当前 cond 的数据，而不是上一步遗留的其他 cond 数据。
+        """
+        if (
+            self.offload_manager is not None
+            and self.step_level in (1, 2)
+            and self.offload_manager.is_ready(cond)
+        ):
+            self.offload_manager.begin_fetch_step(cond, self.num_layers, self.step_level)
+
     def clear_frozen_states(self):
         """清理frozen状态并重置内存统计"""
         self.static_cache.clear()
         self.medium_cache.clear()
+        self.restored_x_dict.clear()
         if self.offload_manager is not None:
             self.offload_manager.clear()
             print("[MaskManager] Cleared all offload buffers and caches", flush=True)
@@ -454,28 +480,6 @@ class MaskManager:
         elif self.step_level == 1:
             return self.active_seqlen
         
-    def _get_prefetch_key_groups(self, cond: str) -> List[List[str]]:
-        """
-        返回按层排列的 KV offload key 分组，供滑动窗口预取使用。
-
-        每个子列表对应一层：
-          step_level==2：仅 static KV → [s_kv_{cond}_{i}]
-          step_level==1：static + medium KV → [s_kv_{cond}_{i}, m_kv_{cond}_{i}]
-
-        x 序列不走 offload，不出现在 key_groups 中。
-        """
-        groups: List[List[str]] = []
-        for i in range(self.num_layers):
-            state_key = f"{cond}_{i}"
-            layer_keys: List[str] = []
-            if self.step_level in (1, 2):
-                layer_keys.append(f"s_kv_{state_key}")
-            if self.step_level == 1:
-                layer_keys.append(f"m_kv_{state_key}")
-            if layer_keys:
-                groups.append(layer_keys)
-        return groups
-
     def update_step_level(self):
         timestep = get_timestep()
 
@@ -490,21 +494,9 @@ class MaskManager:
         else:
             self.step_level = 1  # active compute
 
-        # Fetch 预取：只在 warmup 完成后、需要从 offload 读取的 step 触发
-        if (self.offload_manager is not None
-                and len(self.offload_manager._pinned) > 0
-                and self.step_level in (1, 2)):
-            try:
-                cond = str(GlobalEnv.get_envs("cond"))
-            except KeyError:
-                cond = "0"
-                print(
-                    "[MaskManager] Warning: 'cond' not found in GlobalEnv; "
-                    "defaulting to '0' for prefetch key generation.",
-                    flush=True,
-                )
-            key_groups = self._get_prefetch_key_groups(cond)
-            self.offload_manager.begin_fetch_step(key_groups)
+        # NOTE: begin_fetch_step 不在此处调用。
+        # 它必须在每次 model forward 之前（cond 已正确设置后）通过 begin_cond_fetch() 触发，
+        # 避免使用上一步遗留的错误 cond 值导致 staging buffer 数据错位。
 
         # 更新内存统计
         self._update_memory_stats()
@@ -516,7 +508,7 @@ class MaskManager:
             return
 
         om = self.offload_manager
-        if om is not None and len(om._pinned) > 0:
+        if om is not None and om.is_ready():
             s = om.memory_stats()
             cpu_gb  = s["cpu_pinned_bytes"]        / 1024**3
             fgpu_gb = s["gpu_fetch_staging_bytes"] / 1024**3

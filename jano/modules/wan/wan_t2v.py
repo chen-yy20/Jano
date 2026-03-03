@@ -271,11 +271,13 @@ class WanT2V_jano:
                     if get_cp_worldsize() == 2:
                         if get_cp_group().rank_in_group == 0:
                             GlobalEnv.set_envs("cond", 0) # 标记轮次，每步两轮
+                            mask_manager.begin_cond_fetch("0")
                             noise_pred_cp = self.model(
                                 latent_model_input, t=timestep, **arg_c)[0]
                             
                         elif get_cp_group().rank_in_group == 1:
                             GlobalEnv.set_envs("cond", 1)
+                            mask_manager.begin_cond_fetch("1")
                             noise_pred_cp = self.model(
                                 latent_model_input, t=timestep, **arg_null)[0]
                             
@@ -287,9 +289,11 @@ class WanT2V_jano:
 
                     else:  
                         GlobalEnv.set_envs("cond", 0) # 标记轮次，每步两轮
+                        mask_manager.begin_cond_fetch("0")
                         noise_pred_cond_list = self.model(
                             latent_model_input, t=timestep, **arg_c)
                         GlobalEnv.set_envs("cond", 1)
+                        mask_manager.begin_cond_fetch("1")
                         noise_pred_uncond_list = self.model(
                             latent_model_input, t=timestep, **arg_null)
                     
@@ -311,6 +315,7 @@ class WanT2V_jano:
                         latents[0].unsqueeze(0),
                         return_dict=False,
                         generator=seed_g)[0]
+                    
                     latents = [temp_x0.squeeze(0)]
                     
                     # if GlobalEnv.get_envs("cc_exp") and t == timesteps[-1]:
