@@ -1,5 +1,5 @@
 # Jano: Adaptive Diffusion Generation with Early-stage Convergence Awareness
-[![arXiv](https://img.shields.io/badge/arXiv-2301.12345-b31b1b.svg)](https://arxiv.org/abs/2301.12345)
+[![arXiv](https://img.shields.io/badge/arXiv-2603.00519-b31b1b.svg)](https://arxiv.org/abs/2603.00519)
 
 
 **Jano** is an inference acceleration framework for diffusion-based video/image generation models. It profiles the spatio-temporal dynamics of the latent space during a short warm-up phase and then selectively skips computations for low-dynamic regions, achieving significant speedup with minimal quality degradation.
@@ -141,3 +141,17 @@ This project is licensed under the [Apache License 2.0](LICENSE).
 
 The Wan2.1 model weights are subject to their own license.  
 The FLUX.1-dev model weights are subject to the [FLUX.1-dev Non-Commercial License](https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md).
+
+## Citation / 引用
+If you use this code, please cite our paper:
+```
+@misc{chen2026janoadaptivediffusiongeneration,
+      title={Jano: Adaptive Diffusion Generation with Early-stage Convergence Awareness}, 
+      author={Yuyang Chen and Linqian Zeng and Yijin ZHou and Hengjie Li and Jidong Zhai},
+      year={2026},
+      eprint={2603.00519},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2603.00519}, 
+}
+```
