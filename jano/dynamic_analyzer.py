@@ -15,6 +15,22 @@ from utils.envs import GlobalEnv
 
 from utils.timer import get_timer
 
+# ── Terminal colour helpers ──────────────────────────────────────────────────
+_RESET  = '\033[0m'
+_BOLD   = '\033[1m'
+_CYAN   = '\033[36m'
+_GRAY   = '\033[90m'
+_GREEN  = '\033[32m'
+
+
+def _tqdm_write(msg: str) -> None:
+    """Print without clobbering a live tqdm progress bar."""
+    try:
+        from tqdm import tqdm as _tqdm
+        _tqdm.write(msg)
+    except Exception:
+        print(msg, flush=True)
+
 # def min_max_normalize(data):
 #     min_val = np.min(data)
 #     max_val = np.max(data)
@@ -51,13 +67,12 @@ class DynamicAnalyzer:
         self.diffusion_strength = GlobalEnv.get_envs("d_strength")
         self.max_diffusion_distance = GlobalEnv.get_envs("d_distance")
         
-        print("\nInitialized Dynamic Analyzer:")
-        print("-" * 40)
-        print(f"Tag: {self.tag}")
-        print(f"Original dimensions: T={T}, H={H}, W={W}, C={C}")
-        print(f"Block counts: nt={self.block_manager.nt}, nh={self.block_manager.nh}, nw={self.block_manager.nw}")
-        print(f"Analysis steps: {self.analysis_steps}")
-        print("-" * 40 + "\n")
+        _tqdm_write(
+            f"\n{_BOLD}{_CYAN}[DynamicAnalyzer]{_RESET} tag={self.tag}  "
+            f"T={T} H={H} W={W} C={C}  "
+            f"blocks=(nt={self.block_manager.nt}, nh={self.block_manager.nh}, nw={self.block_manager.nw})  "
+            f"warmup={self.analysis_steps} steps"
+        )
         
         self.block_mask = None
         self.latent_mask = None
@@ -68,62 +83,66 @@ class DynamicAnalyzer:
         step = get_timestep()
         if step <= self.analysis_steps:
             self.stored_features.append(latent)
-            print(f"Step {step} | Stored noise_pred (shape={latent.shape})", flush=True)
+            _tqdm_write(
+                f"{_GRAY}[Warmup {step:2d}/{self.analysis_steps}]{_RESET} "
+                f"stored noise_pred {list(latent.shape)}"
+            )
             if step == self.analysis_steps:
-                enhanced_combined = self.analyze()
+                with get_timer("analyze"):
+                    enhanced_combined = self.analyze()
                 self.stored_features = None
                 return enhanced_combined
         return None
     
     def _compute_dynamics(self, blocked_latents):
-        """计算时空动态性"""
+        """计算时空动态性（全向量化版，消除 Python 循环）
+
+        blocked_latents: (steps, B, t, s, C)
+            steps  : warmup 步数
+            B      : 总 block 数 (nt*nh*nw)
+            t      : 每个 block 的时间帧数 (bt)
+            s      : 每个 block 的空间像素数 (bh*bw)
+            C      : 通道数
+
+        利用 Gram-matrix 技巧计算 pairwise L2 距离，避免展开 (n,n,C) 中间张量：
+            ||xi - xj||^2 = ||xi||^2 + ||xj||^2 - 2 * xi · xj
+        所有操作均在 GPU 上一次性完成。
+        """
+        steps, block_num, t, s, C = blocked_latents.shape
         device = blocked_latents.device
-        steps, block_num, t, s, c = blocked_latents.shape
-        
-        temporal_dynamics = torch.zeros(block_num, device=device)
-        spatial_dynamics = torch.zeros(block_num, device=device)
-        
-        for b in range(block_num):
-            # 时间动态性计算
-            if self.block_manager.T > 1:
-                for si in range(s):
-                    features = blocked_latents[:, b, :, si, :]
-                    feat_norm = features.norm(dim=-1).mean(dim=0)
-                    valid_mask = feat_norm > 1e-6
-                    if valid_mask.sum() == 0:
-                        continue
-                    
-                    features_valid = features[:, valid_mask, :]
-                    diff_matrix = features_valid.unsqueeze(1) - features_valid.unsqueeze(2)
-                    diff_matrix_norm = diff_matrix.norm(dim=-1)
-                    
-                    interval = features_valid.shape[0] // 2
-                    if interval > 0:
-                        delta = diff_matrix_norm[interval:, :, :] - diff_matrix_norm[:-interval, :, :]
-                        temporal_dynamics[b] += delta.abs().mean()
-                temporal_dynamics[b] /= s
-            
-            # 空间动态性计算
-            for ti in range(t):
-                features = blocked_latents[:, b, ti, :, :]
-                feat_norm = features.norm(dim=-1).mean(dim=0)
-                valid_mask = feat_norm > 1e-6
-                if valid_mask.sum() == 0:
-                    continue
-                
-                features_valid = features[:, valid_mask, :]
-                diff_matrix = features_valid.unsqueeze(1) - features_valid.unsqueeze(2)
-                diff_matrix_norm = diff_matrix.norm(dim=-1)
-                
-                interval = features_valid.shape[0] // 2
-                if interval > 0:
-                    delta = diff_matrix_norm[interval:, :, :] - diff_matrix_norm[:-interval, :, :]
-                    spatial_dynamics[b] += delta.abs().mean()
-            spatial_dynamics[b] /= t
-        
-        if self.block_manager.T == 1:
-            temporal_dynamics.fill_(0)
-            
+        interval = steps // 2
+
+        def _pairwise_l2(x: torch.Tensor) -> torch.Tensor:
+            """x: (..., n, C) -> pairwise L2 矩阵 (..., n, n)"""
+            x_sq = (x * x).sum(dim=-1)                          # (..., n)
+            cross = torch.matmul(x, x.transpose(-1, -2))        # (..., n, n)
+            dist_sq = x_sq.unsqueeze(-1) + x_sq.unsqueeze(-2) - 2.0 * cross
+            return dist_sq.clamp_(min=0.0).sqrt_()
+
+        # ── 时间动态性 ────────────────────────────────────────────────
+        # 对每个 (block, s_pos)：在 t 维度上计算 pairwise L2，然后取 step 间差分
+        if self.block_manager.T > 1 and interval > 0:
+            # xt: (B, s, steps, t, C)
+            xt = blocked_latents.permute(1, 3, 0, 2, 4).contiguous()
+            dm_t = _pairwise_l2(xt)                             # (B, s, steps, t, t)
+            delta_t = (dm_t[:, :, interval:] - dm_t[:, :, :steps - interval]).abs_()
+            # 在 (steps-interval, t, t) 上取均值 → (B, s)，再在 s 上取均值 → (B,)
+            temporal_dynamics = delta_t.mean(dim=(2, 3, 4)).mean(dim=1)
+        else:
+            temporal_dynamics = torch.zeros(block_num, device=device)
+
+        # ── 空间动态性 ────────────────────────────────────────────────
+        # 对每个 (block, t_pos)：在 s 维度上计算 pairwise L2，然后取 step 间差分
+        if interval > 0:
+            # xs: (B, t, steps, s, C)
+            xs = blocked_latents.permute(1, 2, 0, 3, 4).contiguous()
+            dm_s = _pairwise_l2(xs)                             # (B, t, steps, s, s)
+            delta_s = (dm_s[:, :, interval:] - dm_s[:, :, :steps - interval]).abs_()
+            # 在 (steps-interval, s, s) 上取均值 → (B, t)，再在 t 上取均值 → (B,)
+            spatial_dynamics = delta_s.mean(dim=(2, 3, 4)).mean(dim=1)
+        else:
+            spatial_dynamics = torch.zeros(block_num, device=device)
+
         return temporal_dynamics, spatial_dynamics
     
     def _enhance_combined_score(self, original_combined: torch.Tensor, block_dims: tuple) -> torch.Tensor:
@@ -269,10 +288,10 @@ class DynamicAnalyzer:
     def analyze(self):
         """储存完profile steps后, 进行动态性分析并返回enhanced combined score"""
         if not self.stored_features:
-            print("No features stored for analysis")
+            _tqdm_write(f"{_GRAY}[Analyze] No features stored.{_RESET}")
             return None
-            
-        print(f"\nAnalyzing {self.tag}...", flush=True)
+
+        _tqdm_write(f"\n{_BOLD}{_CYAN}[Analyze]{_RESET} Running dynamics analysis for tag='{self.tag}' ...")
         
         # 准备数据
         latents_tensor = torch.stack(self.stored_features, dim=0)
@@ -305,7 +324,7 @@ class DynamicAnalyzer:
         #     save_name=self.tag
         # )
         
-        print(f"Analysis completed for {self.tag}\n", flush=True)
+        _tqdm_write(f"{_GREEN}[Analyze]{_RESET} Done — tag='{self.tag}'\n")
         # exit()
         
         return enhanced_combined

@@ -215,11 +215,17 @@ class WanT2V_jano:
                 W = target_shape[3],
             )
             analyzer.step(noise[0])
+            _is_1_3B   = GlobalEnv.get_envs('model') == '1.3B'
+            _seq_len   = 32760 if _is_1_3B else 75600
+            _layer_num = 30    if _is_1_3B else 40
+            _hidden    = 1536  if _is_1_3B else 5120
+            # kv = torch.cat([k, v]) → B_kv=2; flat_full = 2 * seq_len covers worst-case
             mask_manager = init_mask_manager(patch_size=(1,2,2),
-                            seq_len = 32760 if GlobalEnv.get_envs('model') == '1.3B' else 75600,
+                            seq_len=_seq_len,
                             num_inference_steps=GlobalEnv.get_envs('num_inference_steps'),
-                            layer_num=30 if GlobalEnv.get_envs('model') == '1.3B' else 40,
-                            offload=GlobalEnv.get_envs('offload'))
+                            layer_num=_layer_num,
+                            offload=GlobalEnv.get_envs('offload'),
+                            offload_full_shape=(2, _seq_len, _hidden))
         
         no_sync = getattr(self.model, 'no_sync', noop_no_sync)
 
@@ -257,7 +263,25 @@ class WanT2V_jano:
             warmup_steps = GlobalEnv.get_envs('warmup_steps')
             
             with get_timer("generate_e2e"):
-                for step, t in enumerate(tqdm(timesteps)):
+                pbar = tqdm(
+                    timesteps,
+                    desc="Denoising",
+                    dynamic_ncols=True,
+                    position=0,
+                    leave=True,
+                )
+                # 彩色 level 块状条（下方独立一行）
+                level_bar = tqdm(
+                    total=0,
+                    bar_format="  {desc}",
+                    position=1,
+                    leave=True,
+                    ncols=9999,
+                )
+                GlobalEnv.set_envs("pbar", pbar)
+                GlobalEnv.set_envs("level_bar", level_bar)
+                GlobalEnv.set_envs("step_blocks", "")
+                for step, t in enumerate(pbar):
                     latent_model_input = latents    
                     timestep = [t]
                     update_timestep(step)
@@ -317,12 +341,9 @@ class WanT2V_jano:
                         generator=seed_g)[0]
                     
                     latents = [temp_x0.squeeze(0)]
-                    
-                    # if GlobalEnv.get_envs("cc_exp") and t == timesteps[-1]:
-                    #     interval = GlobalEnv.get_envs("static_interval")
-                    #     store_feature(latents[0], step+1, 0, f"output_i{interval}")
-                    #     print(f"Step {step+1} | Stored {latents[0].shape=} for {interval=}. ", flush=True)
-                    
+
+                pbar.close()
+                level_bar.close()
 
             x0 = latents
             if offload_model:

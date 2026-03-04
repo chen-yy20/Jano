@@ -1,33 +1,36 @@
 """
-Pool-Based Dual-Stream Offload Manager for Jano
--------------------------------------------------
+Pool-Based Dual-Stream Offload Manager for Jano  (Preallocated Edition)
+------------------------------------------------------------------------
 设计原则
 --------
-所有 KV 的 pinned CPU memory 以 [layer_num, *shape] 的池形式一次性分配，
-pinned 分配在后台线程中执行，与第一个 step_level==3 的 GPU layer-0 计算重叠。
+CPU Pinned Memory Pool 在 init 阶段由 preallocate() **同步**分配，
+彻底消除推理期间的 cudaHostAlloc 调用（原方案的性能瓶颈）。
 
-CPU Pinned Memory Pool
-    _s_pool[cond]: Tensor[L, *s_shape]  — 所有层 static  KV 共享一块连续内存
-    _m_pool[cond]: Tensor[L, *m_shape]  — 所有层 medium  KV 共享一块连续内存
-    索引方式: pool[layer_idx]  → 对应层的 pinned view，零拷贝
+每层 pool 布局（flat 化存储，保证 DMA slice 连续性）：
+    pool[cond][layer][  0     : s_flat        ]  → static  KV
+    pool[cond][layer][ s_flat : s_flat+m_flat ]  → medium  KV
 
-GPU Staging Buffers（循环复用，固定 k 个，store/fetch 各一组）
-    形状与 s/m_shape 对应，多个 cond 共享（cond 之间串行）
-    store staging: GPU→GPU 同步隔离源 tensor → 异步 DMA 到 pinned pool
-    fetch staging: 从 pinned pool 异步 H2D → 滑动窗口预取
+    flat_full = prod(full_shape[:-1])，head_dim = full_shape[-1]
+    s_flat、m_flat 在首次 store_async 时记录，fetch 时依此切片。
 
-Background Thread
-    start_preallocate() 在 step_level==3 的 layer_idx==0 时启动后台线程
-    主线程在 layer_idx>=0 的 store_async / begin_fetch_step 调用前 join
-    两次 cudaHostAlloc（s_pool + m_pool）与 GPU layer-0 计算并行执行
+GPU Staging Buffers（形状 (flat_full, head_dim)，k 槽循环）
+    store staging : tensor → staging[:flat] → async D2H → pool[layer][off:off+flat]
+    fetch staging : pool[layer][off:off+flat] → async H2D → staging[:flat] → reshape
+
+    所有 DMA 源/目 均为连续 2D slice，效率最优。
+
+Preallocate API
+    preallocate(layer_num, full_shape, full_dtype, conds)
+        在 init_mask_manager（推理初始化阶段）调用，同步完成所有 cudaHostAlloc。
+        推理期间不再触发任何 pinned memory 分配。
 """
 
 from __future__ import annotations
 
-import threading
 import time
 import torch
-from typing import Dict, List, Optional, Tuple
+from math import prod
+from typing import Dict, List, Optional
 
 from utils.timer import get_timer
 
@@ -38,14 +41,13 @@ def _fmt(n: int) -> str:
 
 class OffloadManager:
     """
-    Pool-based + 滑动窗口预取的 Offload Manager。
+    Pool-based + 滑动窗口预取的 Offload Manager（预分配版）。
 
     使用流程
     --------
-    1. step_level==3, layer_idx==0 时调用 start_preallocate()，
-       在后台线程完成两次 cudaHostAlloc，与 GPU layer-0 计算重叠。
-    2. 同一 step 后续 store_async(tensor, layer_idx, kv_type, cond) 写入 pool。
-    3. step_level==1/2 时，begin_fetch_step() + fetch() 滑动窗口回读。
+    1. 初始化时调用 preallocate()，同步完成 pinned memory 分配。
+    2. step_level==3 时 store_async() 写入 pool。
+    3. step_level==1/2 时 begin_fetch_step() + fetch() 滑动窗口回读。
     """
 
     def __init__(
@@ -57,57 +59,54 @@ class OffloadManager:
         self.device: Optional[torch.device] = None
         self.k = prefetch_window
 
-        # ── 后台分配线程 ────────────────────────────────────────────────────
-        # cond → Thread（pool 分配线程）
-        self._pool_threads: Dict[str, threading.Thread] = {}
+        # ── CPU Pinned Memory Pool ──────────────────────────────────────────
+        # cond → Tensor[L, flat_full, head_dim]  (pinned CPU)
+        self._pool: Dict[str, torch.Tensor] = {}
 
-        # ── CPU Pinned Memory Pools ─────────────────────────────────────────
-        # cond → Tensor[layer_num, *shape]  (pinned CPU)
-        self._s_pool: Dict[str, torch.Tensor] = {}
-        self._m_pool: Dict[str, torch.Tensor] = {}
+        # ── 形状 / dtype ────────────────────────────────────────────────────
+        self._flat_full: int = 0          # prod(full_shape[:-1])
+        self._head_dim: int = 0           # full_shape[-1]
+        self._pool_dtype: Optional[torch.dtype] = None
+        self._layer_num: int = 0
 
-        # ── GPU Staging Buffers（所有 cond 共享，因 cond 之间串行）──────────
-        # Store staging（GPU 端临时缓冲，隔离源 tensor 生命期）
-        self._s_store_staging: List[torch.Tensor] = []   # k × s_shape
-        self._m_store_staging: List[torch.Tensor] = []   # k × m_shape
-        # Fetch staging（H2D DMA 目标，滑动窗口）
-        self._s_fetch_staging: List[torch.Tensor] = []
-        self._m_fetch_staging: List[torch.Tensor] = []
-        # staging 已初始化标志（首次 _ensure_cond_ready 时分配）
+        # ── per-(cond, layer) KV 长度 & 原始形状 ───────────────────────────
+        # 以 flat 元素数量计（= prod(orig_shape[:-1])）
+        self._s_len:        Dict[str, List[int]]              = {}
+        self._m_len:        Dict[str, List[int]]              = {}
+        self._s_orig_shape: Dict[str, List[Optional[tuple]]]  = {}
+        self._m_orig_shape: Dict[str, List[Optional[tuple]]]  = {}
+
+        # ── GPU Staging Buffers ─────────────────────────────────────────────
+        # store staging（s/m 共享，单层内 s→m 串行）
+        self._store_staging:   List[torch.Tensor] = []   # k × (flat_full, head_dim)
+        # fetch staging（s/m 分开，支持 step_level==1 同时预取）
+        self._fetch_s_staging: List[torch.Tensor] = []   # k × (flat_full, head_dim)
+        self._fetch_m_staging: List[torch.Tensor] = []   # k × (flat_full, head_dim)
         self._staging_ready: bool = False
 
-        # ── Store staging 槽位循环 ─────────────────────────────────────────
-        self._s_store_slot: int = 0
-        self._m_store_slot: int = 0
-        # 每个 store staging 槽位的 DMA 完成事件（用于复用前等待）
-        self._s_store_slot_done: List[torch.cuda.Event] = []
-        self._m_store_slot_done: List[torch.cuda.Event] = []
+        # ── Store 槽位循环 ──────────────────────────────────────────────────
+        self._store_slot: int = 0
+        self._store_slot_done: List[torch.cuda.Event] = []
 
-        # ── CUDA Streams & Events ──────────────────────────────────────────
+        # ── CUDA Streams ────────────────────────────────────────────────────
         self.fetch_stream: Optional[torch.cuda.Stream] = None
         self.store_stream: Optional[torch.cuda.Stream] = None
-        # per-(cond, layer) 事件
+
+        # ── per-(cond, layer) CUDA Events ───────────────────────────────────
         self._s_fetch_events: Dict[str, List[torch.cuda.Event]] = {}
         self._m_fetch_events: Dict[str, List[torch.cuda.Event]] = {}
         self._s_store_events: Dict[str, List[torch.cuda.Event]] = {}
         self._m_store_events: Dict[str, List[torch.cuda.Event]] = {}
 
         # ── Fetch 滑动窗口状态（每 fetch step 重置）─────────────────────────
-        self._fetch_cond: str = "0"
+        self._fetch_cond:       str = "0"
         self._fetch_step_level: int = 0
         self._fetch_num_layers: int = 0
         self._fetch_next_layer: int = 0
-        self._s_fetch_slot: int = 0
-        self._m_fetch_slot: int = 0
-        self._s_fetch_slot_map: Dict[int, int] = {}   # layer_idx → staging slot
-        self._m_fetch_slot_map: Dict[int, int] = {}
-
-        # ── 形状缓存（首次 start_preallocate 后填充）────────────────────────
-        self._s_shape: Optional[tuple] = None
-        self._m_shape: Optional[tuple] = None
-        self._s_dtype: Optional[torch.dtype] = None
-        self._m_dtype: Optional[torch.dtype] = None
-        self._layer_num: int = 0
+        self._fetch_s_slot:     int = 0
+        self._fetch_m_slot:     int = 0
+        self._fetch_s_slot_map: Dict[int, int] = {}   # layer_idx → staging slot
+        self._fetch_m_slot_map: Dict[int, int] = {}
 
     # =========================================================================
     # 内部工具
@@ -123,36 +122,30 @@ class OffloadManager:
         self.store_stream = torch.cuda.Stream(device=self.device)
 
     def _ensure_staging(self) -> None:
-        """在主线程完成 GPU staging buffer 和 slot events 的分配（快，μs 级）。"""
+        """分配 GPU staging buffers（快，μs 级；由 preallocate 之后首次 store/fetch 触发）。"""
         if self._staging_ready:
             return
-        assert self._s_shape is not None, "start_preallocate 必须在此之前调用"
+        assert self._flat_full > 0, "preallocate() 必须先于 _ensure_staging() 调用"
         k = self.k
-        with get_timer("offload.ensure_staging"):
-            for _ in range(k):
-                self._s_store_staging.append(
-                    torch.empty(self._s_shape, dtype=self._s_dtype, device=self.device)
-                )
-                self._m_store_staging.append(
-                    torch.empty(self._m_shape, dtype=self._m_dtype, device=self.device)
-                )
-                self._s_fetch_staging.append(
-                    torch.empty(self._s_shape, dtype=self._s_dtype, device=self.device)
-                )
-                self._m_fetch_staging.append(
-                    torch.empty(self._m_shape, dtype=self._m_dtype, device=self.device)
-                )
-                # store staging 槽位完成事件（初始 record 一次让 query 不阻塞）
-                ev_s = torch.cuda.Event()
-                ev_s.record()   # 初始化为"已完成"
-                self._s_store_slot_done.append(ev_s)
-                ev_m = torch.cuda.Event()
-                ev_m.record()
-                self._m_store_slot_done.append(ev_m)
+        shape = (self._flat_full, self._head_dim)
+        dtype = self._pool_dtype
+        for _ in range(k):
+            self._store_staging.append(
+                torch.empty(shape, dtype=dtype, device=self.device)
+            )
+            self._fetch_s_staging.append(
+                torch.empty(shape, dtype=dtype, device=self.device)
+            )
+            self._fetch_m_staging.append(
+                torch.empty(shape, dtype=dtype, device=self.device)
+            )
+            ev = torch.cuda.Event()
+            ev.record()   # 初始化为"已完成"状态
+            self._store_slot_done.append(ev)
         self._staging_ready = True
 
     def _ensure_cond_events(self, cond: str) -> None:
-        """为该 cond 分配 per-layer CUDA events（主线程，μs 级）。"""
+        """为该 cond 分配 per-layer CUDA events（μs 级）。"""
         L = self._layer_num
         if cond not in self._s_fetch_events:
             self._s_fetch_events[cond] = [torch.cuda.Event() for _ in range(L)]
@@ -161,79 +154,84 @@ class OffloadManager:
             self._m_store_events[cond] = [torch.cuda.Event() for _ in range(L)]
 
     def _ensure_cond_ready(self, cond: str) -> None:
-        """等待该 cond 的后台分配线程完成，然后初始化 staging 和 events。"""
-        if cond in self._pool_threads:
-            with get_timer(f"offload.pool_wait[{cond}]"):
-                self._pool_threads.pop(cond).join()
-        # 线程已完成：pool 和形状已填充，现在初始化 staging/events
+        """确保 cond 的 pool 已分配，并完成 staging / events 初始化。"""
+        assert cond in self._pool, (
+            f"[OffloadManager] cond={cond!r} 的 pool 尚未分配，"
+            "请在推理初始化时调用 preallocate()。"
+        )
         self._ensure_staging()
         self._ensure_cond_events(cond)
 
     # =========================================================================
-    # 后台预分配
+    # 预分配（init 阶段同步调用）
     # =========================================================================
 
-    def start_preallocate(
+    def preallocate(
         self,
-        cond: str,
         layer_num: int,
-        s_shape: tuple,
-        s_dtype: torch.dtype,
-        m_shape: tuple,
-        m_dtype: torch.dtype,
+        full_shape: tuple,
+        full_dtype: torch.dtype,
+        conds: List[str],
     ) -> None:
         """
-        在后台线程中为 cond 一次性分配两块 pinned memory pool：
-            s_pool[cond]: Tensor[layer_num, *s_shape]
-            m_pool[cond]: Tensor[layer_num, *m_shape]
+        在推理初始化阶段同步分配所有 cond 的 CPU pinned memory pool。
 
-        在 step_level==3 的 layer_idx==0 时调用，与 GPU 计算重叠。
-        幂等：已分配过则直接返回。
+        Parameters
+        ----------
+        layer_num : int
+            Transformer 层数。
+        full_shape : tuple
+            单层 KV 的最大形状，例如 (2, 32760, 1536)。
+            flat_full = prod(full_shape[:-1])，head_dim = full_shape[-1]。
+            static + medium 的 flat token 数之和不超过 flat_full。
+        full_dtype : torch.dtype
+            KV 数据类型，例如 torch.bfloat16。
+        conds : list of str
+            需要预分配的 cond 标识列表，例如 ["0", "1"]。
         """
-        if cond in self._s_pool:
-            return   # 已分配
-
         self._ensure_streams()
 
-        # 记录形状（主线程保存，供 _ensure_staging 使用）
-        if self._s_shape is None:
-            self._s_shape = tuple(s_shape)
-            self._m_shape = tuple(m_shape)
-            self._s_dtype = s_dtype
-            self._m_dtype = m_dtype
-            self._layer_num = layer_num
+        flat_full = prod(full_shape[:-1])
+        head_dim  = full_shape[-1]
 
-        def _alloc(c: str, L: int, ss: tuple, sd, ms: tuple, md):
-            t0 = time.perf_counter()
-            s_pool = torch.empty((L, *ss), dtype=sd, pin_memory=True)
-            m_pool = torch.empty((L, *ms), dtype=md, pin_memory=True)
-            elapsed = (time.perf_counter() - t0) * 1e3
+        # 记录形状参数（staging 由 _ensure_staging 在首次使用时懒分配）
+        self._flat_full   = flat_full
+        self._head_dim    = head_dim
+        self._pool_dtype  = full_dtype
+        self._layer_num   = layer_num
+
+        t0 = time.perf_counter()
+        for cond in conds:
+            if cond in self._pool:
+                continue   # 幂等
+            pool = torch.empty(
+                (layer_num, flat_full, head_dim),
+                dtype=full_dtype,
+                pin_memory=True,
+            )
+            self._pool[cond] = pool
+            self._s_len[cond]        = [0] * layer_num
+            self._m_len[cond]        = [0] * layer_num
+            self._s_orig_shape[cond] = [None] * layer_num
+            self._m_orig_shape[cond] = [None] * layer_num
             print(
-                f"[OffloadManager] pool alloc cond={c}  "
-                f"s_pool={s_pool.nbytes/1024**2:.1f}MB  "
-                f"m_pool={m_pool.nbytes/1024**2:.1f}MB  "
-                f"elapsed={elapsed:.2f}ms",
+                f"[OffloadManager] preallocate cond={cond}  "
+                f"pool={pool.nbytes / 1024**2:.1f}MB  "
+                f"shape=[{layer_num}, {flat_full}, {head_dim}]",
                 flush=True,
             )
-            self._s_pool[c] = s_pool
-            self._m_pool[c] = m_pool
-
-        t = threading.Thread(
-            target=_alloc,
-            args=(cond, layer_num, s_shape, s_dtype, m_shape, m_dtype),
-            daemon=True,
+        elapsed = (time.perf_counter() - t0) * 1e3
+        print(
+            f"[OffloadManager] preallocate done  "
+            f"conds={conds}  elapsed={elapsed:.2f}ms",
+            flush=True,
         )
-        self._pool_threads[cond] = t
-        t.start()
 
     def is_ready(self, cond: Optional[str] = None) -> bool:
-        """
-        检查 pool 是否就绪。
-        cond=None 时只要有任意 cond 已就绪（或分配中）即返回 True。
-        """
+        """检查 pool 是否就绪（已通过 preallocate 分配）。"""
         if cond is not None:
-            return cond in self._s_pool or cond in self._pool_threads
-        return bool(self._s_pool) or bool(self._pool_threads)
+            return cond in self._pool
+        return bool(self._pool)
 
     # =========================================================================
     # Store（GPU → CPU Pool，双流流水线）
@@ -247,44 +245,58 @@ class OffloadManager:
         cond: str,
     ) -> None:
         """
-        异步将 GPU tensor 存入 pool[cond][layer_idx]。
+        异步将 GPU tensor 存入 pool[cond][layer_idx] 的对应区段。
 
-        流程：
-          1. tensor → store_staging[slot]（同步 GPU→GPU，隔离源 tensor）
-          2. store_staging[slot] → pool[cond][layer_idx]（异步 D2H DMA）
+        存储布局（flat 化后均为连续 slice）：
+          kv_type='s'：pool[layer][0 : s_flat]
+          kv_type='m'：pool[layer][s_flat : s_flat+m_flat]
 
         kv_type: 's'（static）或 'm'（medium）
         """
         self._ensure_cond_ready(cond)
 
+        # ── flat 化源 tensor ────────────────────────────────────────────────
+        orig_shape  = tensor.shape
+        tensor_flat = tensor.detach().reshape(-1, orig_shape[-1])  # (flat, head_dim)
+        flat_len    = tensor_flat.shape[0]
+
+        assert flat_len <= self._flat_full, (
+            f"[OffloadManager] tensor flat_len={flat_len} > flat_full={self._flat_full}，"
+            "请检查 full_shape 是否足够大。"
+        )
+
+        # ── 计算 pool 内偏移 & 记录元信息 ───────────────────────────────────
         if kv_type == "s":
-            pool        = self._s_pool[cond]
-            staging_lst = self._s_store_staging
-            slot_done   = self._s_store_slot_done
-            store_ev    = self._s_store_events[cond][layer_idx]
-            slot        = self._s_store_slot % self.k
-            self._s_store_slot += 1
+            offset   = 0
+            store_ev = self._s_store_events[cond][layer_idx]
+            self._s_len[cond][layer_idx]        = flat_len
+            self._s_orig_shape[cond][layer_idx] = orig_shape
         else:
-            pool        = self._m_pool[cond]
-            staging_lst = self._m_store_staging
-            slot_done   = self._m_store_slot_done
-            store_ev    = self._m_store_events[cond][layer_idx]
-            slot        = self._m_store_slot % self.k
-            self._m_store_slot += 1
+            # m 跟在 s 之后（s 必须先于 m 存入）
+            offset   = self._s_len[cond][layer_idx]
+            store_ev = self._m_store_events[cond][layer_idx]
+            self._m_len[cond][layer_idx]        = flat_len
+            self._m_orig_shape[cond][layer_idx] = orig_shape
 
-        # 确保此 staging 槽位上的上一条 DMA 已完成（通常已完成，~0μs）
-        slot_done[slot].synchronize()
+        # ── 申请 store staging 槽位 ─────────────────────────────────────────
+        slot = self._store_slot % self.k
+        self._store_slot += 1
+        # 确保此槽位前一条 DMA 已完成（通常已完成，~0μs）
+        self._store_slot_done[slot].synchronize()
 
-        staging = staging_lst[slot]
+        staging = self._store_staging[slot]
 
-        # step1: 同步 GPU→GPU 拷贝到 staging，隔离源 tensor
-        staging.copy_(tensor.detach(), non_blocking=False)
+        # step1: 同步 GPU→GPU 拷贝到 staging slice，隔离源 tensor 生命期
+        staging[:flat_len].copy_(tensor_flat, non_blocking=False)
 
-        # step2: staging → pinned pool[layer_idx] 异步 D2H DMA
+        # step2: staging slice → pinned pool slice 异步 D2H DMA（均为连续 2D 视图）
+        pool_slice    = self._pool[cond][layer_idx][offset : offset + flat_len]
+        staging_slice = staging[:flat_len]
+
         self.store_stream.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(self.store_stream):
-            pool[layer_idx].copy_(staging, non_blocking=True)
-            slot_done[slot].record(self.store_stream)   # 记录此槽位 DMA 完成
+            pool_slice.copy_(staging_slice, non_blocking=True)
+            self._store_slot_done[slot].record(self.store_stream)
             store_ev.record(self.store_stream)
 
     def wait_store(self, cond: str, layer_idx: int, kv_type: str) -> None:
@@ -317,13 +329,13 @@ class OffloadManager:
         self._fetch_step_level = step_level
         self._fetch_num_layers = num_layers
         self._fetch_next_layer = 0
-        self._s_fetch_slot     = 0
-        self._m_fetch_slot     = 0
-        self._s_fetch_slot_map.clear()
-        self._m_fetch_slot_map.clear()
+        self._fetch_s_slot     = 0
+        self._fetch_m_slot     = 0
+        self._fetch_s_slot_map.clear()
+        self._fetch_m_slot_map.clear()
 
-        # 确保所有 store_stream D2H 写入完成后，fetch_stream 再发起 H2D 读取，
-        # 防止 store D2H（写 CPU pool）与 fetch H2D（读 CPU pool）数据竞争。
+        # 确保 store_stream 的所有 D2H 写入先于 fetch_stream 的 H2D 读取，
+        # 防止数据竞争。
         self.fetch_stream.wait_stream(self.store_stream)
 
         for _ in range(min(self.k, num_layers)):
@@ -331,91 +343,101 @@ class OffloadManager:
             self._fetch_next_layer += 1
 
     def _issue_prefetch_layer(self, layer_idx: int) -> None:
-        """在 fetch_stream 上为 layer_idx 发起异步 H2D DMA。"""
+        """在 fetch_stream 上为 layer_idx 发起异步 H2D DMA（连续 slice）。"""
         if layer_idx < 0 or layer_idx >= self._fetch_num_layers:
             return
         cond = self._fetch_cond
-        if cond not in self._s_pool:
+        if cond not in self._pool:
             return
 
-        # 等待当前计算流最新进度，防止 DMA 覆盖正在被读取的 staging slot
         self.fetch_stream.wait_stream(torch.cuda.current_stream())
 
         with torch.cuda.stream(self.fetch_stream):
             if self._fetch_step_level in (1, 2):
-                slot = self._s_fetch_slot % self.k
-                self._s_fetch_slot += 1
-                self._s_fetch_staging[slot].copy_(
-                    self._s_pool[cond][layer_idx], non_blocking=True
+                s_flat = self._s_len[cond][layer_idx]
+                slot   = self._fetch_s_slot % self.k
+                self._fetch_s_slot += 1
+                self._fetch_s_staging[slot][:s_flat].copy_(
+                    self._pool[cond][layer_idx][:s_flat], non_blocking=True
                 )
                 self._s_fetch_events[cond][layer_idx].record(self.fetch_stream)
-                self._s_fetch_slot_map[layer_idx] = slot
+                self._fetch_s_slot_map[layer_idx] = slot
 
             if self._fetch_step_level == 1:
-                slot = self._m_fetch_slot % self.k
-                self._m_fetch_slot += 1
-                self._m_fetch_staging[slot].copy_(
-                    self._m_pool[cond][layer_idx], non_blocking=True
+                s_flat = self._s_len[cond][layer_idx]
+                m_flat = self._m_len[cond][layer_idx]
+                slot   = self._fetch_m_slot % self.k
+                self._fetch_m_slot += 1
+                self._fetch_m_staging[slot][:m_flat].copy_(
+                    self._pool[cond][layer_idx][s_flat : s_flat + m_flat],
+                    non_blocking=True,
                 )
                 self._m_fetch_events[cond][layer_idx].record(self.fetch_stream)
-                self._m_fetch_slot_map[layer_idx] = slot
+                self._fetch_m_slot_map[layer_idx] = slot
 
     def _issue_prefetch_fallback(self, layer_idx: int, kv_type: str) -> None:
-        """Fallback：layer 未在预取窗口内时同步发起。"""
+        """Fallback：layer 未在预取窗口内时同步补发。"""
         print(
-            f"[OffloadManager] Fallback prefetch: {kv_type}_kv_{layer_idx}",
+            f"[OffloadManager] Fallback prefetch: {kv_type}_kv layer={layer_idx}",
             flush=True,
         )
         cond = self._fetch_cond
         self.fetch_stream.wait_stream(torch.cuda.current_stream())
         with torch.cuda.stream(self.fetch_stream):
             if kv_type == "s":
-                slot = self._s_fetch_slot % self.k
-                self._s_fetch_slot += 1
-                self._s_fetch_staging[slot].copy_(
-                    self._s_pool[cond][layer_idx], non_blocking=True
+                s_flat = self._s_len[cond][layer_idx]
+                slot   = self._fetch_s_slot % self.k
+                self._fetch_s_slot += 1
+                self._fetch_s_staging[slot][:s_flat].copy_(
+                    self._pool[cond][layer_idx][:s_flat], non_blocking=True
                 )
                 self._s_fetch_events[cond][layer_idx].record(self.fetch_stream)
-                self._s_fetch_slot_map[layer_idx] = slot
+                self._fetch_s_slot_map[layer_idx] = slot
             else:
-                slot = self._m_fetch_slot % self.k
-                self._m_fetch_slot += 1
-                self._m_fetch_staging[slot].copy_(
-                    self._m_pool[cond][layer_idx], non_blocking=True
+                s_flat = self._s_len[cond][layer_idx]
+                m_flat = self._m_len[cond][layer_idx]
+                slot   = self._fetch_m_slot % self.k
+                self._fetch_m_slot += 1
+                self._fetch_m_staging[slot][:m_flat].copy_(
+                    self._pool[cond][layer_idx][s_flat : s_flat + m_flat],
+                    non_blocking=True,
                 )
                 self._m_fetch_events[cond][layer_idx].record(self.fetch_stream)
-                self._m_fetch_slot_map[layer_idx] = slot
+                self._fetch_m_slot_map[layer_idx] = slot
 
     def fetch(self, layer_idx: int, kv_type: str, cond: str) -> torch.Tensor:
         """
-        等待 layer_idx 的预取完成，返回 GPU staging tensor。
+        等待 layer_idx 的预取完成，返回 GPU tensor（已还原为原始形状）。
 
         kv_type: 's'（static）或 'm'（medium）
         """
         self._ensure_cond_ready(cond)
 
         if kv_type == "s":
-            if layer_idx not in self._s_fetch_slot_map:
+            if layer_idx not in self._fetch_s_slot_map:
                 self._issue_prefetch_fallback(layer_idx, "s")
             torch.cuda.current_stream().wait_event(
                 self._s_fetch_events[cond][layer_idx]
             )
             # ⚠ 必须先 clone，再触发下一层预取。
-            # 若直接持有 staging 引用后再触发预取，_issue_prefetch_layer 内的
-            # fetch_stream.wait_stream(current_stream) 只能看到此时 current_stream
-            # 的快照（仅含 wait_event，尚未提交 attention 计算），fetch_stream
-            # 因此提前启动 H2D DMA 并覆盖 staging[slot]，
-            # 导致调用方从 staging 中读取到下一层的错误数据。
-            result = self._s_fetch_staging[self._s_fetch_slot_map[layer_idx]].clone()
+            # 若先触发预取，fetch_stream.wait_stream(current_stream) 只能看到
+            # wait_event 为止的快照，可能提前启动 H2D 并覆盖同一 staging slot。
+            flat   = self._s_len[cond][layer_idx]
+            shape  = self._s_orig_shape[cond][layer_idx]
+            slot   = self._fetch_s_slot_map[layer_idx]
+            result = self._fetch_s_staging[slot][:flat].clone().reshape(shape)
         else:
-            if layer_idx not in self._m_fetch_slot_map:
+            if layer_idx not in self._fetch_m_slot_map:
                 self._issue_prefetch_fallback(layer_idx, "m")
             torch.cuda.current_stream().wait_event(
                 self._m_fetch_events[cond][layer_idx]
             )
-            result = self._m_fetch_staging[self._m_fetch_slot_map[layer_idx]].clone()
+            flat   = self._m_len[cond][layer_idx]
+            shape  = self._m_orig_shape[cond][layer_idx]
+            slot   = self._fetch_m_slot_map[layer_idx]
+            result = self._fetch_m_staging[slot][:flat].clone().reshape(shape)
 
-        # 触发下一层预取（每层仅在 's' 时触发一次，避免重复）
+        # 触发下一层预取（每层仅在 's' 时驱动一次，避免重复）
         # clone() 之后 staging slot 与返回张量已解耦，可安全复用。
         if kv_type == "s":
             self._issue_prefetch_layer(self._fetch_next_layer)
@@ -424,8 +446,20 @@ class OffloadManager:
         return result
 
     # =========================================================================
-    # 兼容旧接口（空操作）
+    # 废弃接口（向后兼容，空操作）
     # =========================================================================
+
+    def start_preallocate(
+        self,
+        cond: str,
+        layer_num: int,
+        s_shape: tuple,
+        s_dtype: torch.dtype,
+        m_shape: tuple,
+        m_dtype: torch.dtype,
+    ) -> None:
+        """[已废弃] pool 现在由 preallocate() 在 init 阶段统一分配，此方法为空操作。"""
+        pass
 
     def register_shape(self, key: str, shape: tuple, dtype: torch.dtype) -> None:
         """[已废弃] 兼容旧调用，空操作。"""
@@ -440,12 +474,10 @@ class OffloadManager:
     # =========================================================================
 
     def memory_stats(self) -> dict:
-        cpu_bytes = sum(t.nbytes for t in self._s_pool.values()) + \
-                    sum(t.nbytes for t in self._m_pool.values())
-        gpu_fetch = sum(t.nbytes for t in self._s_fetch_staging) + \
-                    sum(t.nbytes for t in self._m_fetch_staging)
-        gpu_store = sum(t.nbytes for t in self._s_store_staging) + \
-                    sum(t.nbytes for t in self._m_store_staging)
+        cpu_bytes = sum(t.nbytes for t in self._pool.values())
+        gpu_store = sum(t.nbytes for t in self._store_staging)
+        gpu_fetch = sum(t.nbytes for t in self._fetch_s_staging) + \
+                    sum(t.nbytes for t in self._fetch_m_staging)
         if self.device is not None:
             gpu_allocated = torch.cuda.memory_allocated(self.device)
             gpu_peak      = torch.cuda.max_memory_allocated(self.device)
@@ -471,35 +503,51 @@ class OffloadManager:
             flush=True,
         )
 
+    def reset_lens(self) -> None:
+        """
+        重置 per-layer 长度 & 形状记录（不释放 pinned pool）。
+        在同一视频内更新 frozen 区域后调用，避免重新 cudaHostAlloc。
+        """
+        for cond in self._pool:
+            L = self._layer_num
+            self._s_len[cond]        = [0] * L
+            self._m_len[cond]        = [0] * L
+            self._s_orig_shape[cond] = [None] * L
+            self._m_orig_shape[cond] = [None] * L
+        self._fetch_s_slot_map.clear()
+        self._fetch_m_slot_map.clear()
+        self._store_slot   = 0
+        self._fetch_s_slot = 0
+        self._fetch_m_slot = 0
+
     def clear(self) -> None:
         """释放所有资源（推理结束后调用）。"""
-        # 等待所有后台线程
-        for t in self._pool_threads.values():
-            t.join()
-        self._pool_threads.clear()
-        self._s_pool.clear()
-        self._m_pool.clear()
-        self._s_store_staging.clear()
-        self._m_store_staging.clear()
-        self._s_fetch_staging.clear()
-        self._m_fetch_staging.clear()
-        self._s_store_slot_done.clear()
-        self._m_store_slot_done.clear()
+        self._pool.clear()
+        self._store_staging.clear()
+        self._fetch_s_staging.clear()
+        self._fetch_m_staging.clear()
+        self._store_slot_done.clear()
         self._s_fetch_events.clear()
         self._m_fetch_events.clear()
         self._s_store_events.clear()
         self._m_store_events.clear()
-        self._s_fetch_slot_map.clear()
-        self._m_fetch_slot_map.clear()
-        self._staging_ready   = False
-        self._s_shape         = None
-        self._m_shape         = None
-        self._layer_num       = 0
-        self._s_store_slot    = 0
-        self._m_store_slot    = 0
-        self.device           = None
-        self.fetch_stream     = None
-        self.store_stream     = None
+        self._fetch_s_slot_map.clear()
+        self._fetch_m_slot_map.clear()
+        self._s_len.clear()
+        self._m_len.clear()
+        self._s_orig_shape.clear()
+        self._m_orig_shape.clear()
+        self._staging_ready  = False
+        self._flat_full      = 0
+        self._head_dim       = 0
+        self._layer_num      = 0
+        self._store_slot     = 0
+        self._fetch_s_slot   = 0
+        self._fetch_m_slot   = 0
+        self.device          = None
+        self.fetch_stream    = None
+        self.store_stream    = None
+        self._pool_dtype     = None
 
 
 # ---------------------------------------------------------------------------

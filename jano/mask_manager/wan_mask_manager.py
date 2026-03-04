@@ -10,6 +10,26 @@ from jano.stuff import get_timestep, visualize_mask
 from jano.offload_manager import OffloadManager
 from utils.envs import GlobalEnv
 from utils.timer import get_timer
+
+# ── Terminal colour helpers ──────────────────────────────────────────────────
+_RESET  = '\033[0m'
+_BOLD   = '\033[1m'
+_GRAY   = '\033[90m'
+_GREEN  = '\033[32m'
+_YELLOW = '\033[33m'
+_CYAN   = '\033[36m'
+
+# level → color
+_LEVEL_COLOR = {0: _GRAY, 1: _GREEN, 2: _YELLOW, 3: _CYAN}
+
+
+def _tqdm_write(msg: str) -> None:
+    """Print without clobbering a live tqdm progress bar."""
+    try:
+        from tqdm import tqdm as _tqdm
+        _tqdm.write(msg)
+    except Exception:
+        print(msg, flush=True)
         
 def create_random_latents_mask(x: torch.Tensor, ratio: float = 0.5, device=None):
     """
@@ -173,10 +193,9 @@ class MaskManager:
         self.offload_manager: Optional[OffloadManager] = offload_manager
         if offload_manager is not None:
             self.offload_kv = True
-            print(
-                "[MaskManager] Dual-stream offload pipeline enabled "
-                f"({layer_nums} layers).",
-                flush=True,
+            _tqdm_write(
+                f"{_CYAN}[MaskManager]{_RESET} Dual-stream offload pipeline enabled "
+                f"({layer_nums} layers)."
             )
         
 
@@ -228,15 +247,23 @@ class MaskManager:
         medium_dynamic_ratio = (latent_mask == 2).sum().item() / total_pixels * 100
         high_dynamic_ratio = (latent_mask == 3).sum().item() / total_pixels * 100
         
-        print(f"Created dynamics-based mask with:")
-        print(f"Low dynamic regions (1): {low_dynamic_ratio:.2f}%")
-        print(f"Medium dynamic regions (2): {medium_dynamic_ratio:.2f}%")
-        print(f"High dynamic regions (3): {high_dynamic_ratio:.2f}%")
+        _bar_w = 40
+        _l1_w  = round(low_dynamic_ratio    / 100 * _bar_w)
+        _l2_w  = round(medium_dynamic_ratio / 100 * _bar_w)
+        _l3_w  = _bar_w - _l1_w - _l2_w
+        _bar   = (_GRAY + '█' * _l1_w + _YELLOW + '█' * _l2_w +
+                  _GREEN + '█' * _l3_w + _RESET)
+        _tqdm_write(
+            f"{_BOLD}[Mask]{_RESET} {_bar}  "
+            f"{_GRAY}L1(static):{_RESET}{low_dynamic_ratio:5.1f}%  "
+            f"{_YELLOW}L2(medium):{_RESET}{medium_dynamic_ratio:5.1f}%  "
+            f"{_GREEN}L3(active):{_RESET}{high_dynamic_ratio:5.1f}%"
+        )
         
         # 可视化
         # latent_mask = create_random_latents_mask(latent_mask, GlobalEnv.get_envs("random")) # 启用了随机mask
         # latent_mask = self.generate_ratio_mask(combined_score)
-        visualize_mask(latent_mask)
+        # visualize_mask(latent_mask)
         self.latent_mask = latent_mask
         self.sequence_mask = self.transform_mask(latent_mask)
         
@@ -304,7 +331,13 @@ class MaskManager:
         self.active_mask = (sequence_mask == 3).bool()
         self.active_seqlen = (sequence_mask == 3).sum().item()  # 高动态区域长度（3）
         
-        print(f"Sequence lengths - Total: {self.full_seq_len}, Medium+High: {self.medium_seqlen}, High: {self.active_seqlen}")
+        _med_pct = self.medium_seqlen / self.full_seq_len * 100 if self.full_seq_len else 0
+        _act_pct = self.active_seqlen  / self.full_seq_len * 100 if self.full_seq_len else 0
+        _tqdm_write(
+            f"{_BOLD}[SeqLen]{_RESET} total={self.full_seq_len}  "
+            f"{_YELLOW}med+high={self.medium_seqlen}({_med_pct:.1f}%){_RESET}  "
+            f"{_GREEN}high={self.active_seqlen}({_act_pct:.1f}%){_RESET}"
+        )
 
         
         return sequence_mask
@@ -377,21 +410,8 @@ class MaskManager:
             static_data = x[:, self.static_bool_mask, :]
             medium_data = x[:, self.medium_bool_mask, :]
 
-            if layer_idx == 20:
-                print(f"{get_timestep()} | Store to {state_key}, {static_data.shape=}, {static_data[0][2][:5]=}", flush=True)
-
             if self.offload_manager is not None:
                 om = self.offload_manager
-                # layer_idx==0 时启动后台线程预分配两块 pool（与当前层 GPU 计算重叠）
-                if layer_idx == 0:
-                    om.start_preallocate(
-                        name,
-                        self.num_layers,
-                        tuple(static_data.shape),
-                        static_data.dtype,
-                        tuple(medium_data.shape),
-                        medium_data.dtype,
-                    )
                 om.store_async(static_data, layer_idx, 's', name)
                 om.store_async(medium_data, layer_idx, 'm', name)
                 del static_data, medium_data
@@ -418,8 +438,6 @@ class MaskManager:
             # 恢复 static（从 CPU fetch 回 GPU）
             if self.offload_manager is not None:
                 static_kv = om.fetch(layer_idx, 's', name)
-                if layer_idx == 20:
-                    print(f"{get_timestep()} | [L2] Fetch static from {state_key}, {static_kv.shape=}, {static_kv[0][2][:5]=}", flush=True)
             elif self.offload_kv:
                 static_kv = self.static_cache[state_key].cuda()
             else:
@@ -440,9 +458,6 @@ class MaskManager:
                 medium_kv = self.medium_cache[state_key]
                 static_kv = self.static_cache[state_key]
                 
-            if layer_idx == 20:
-                print(f"{get_timestep()} | Fetch from {state_key}, {static_kv.shape=}, {static_kv[0][2][:5]=}", flush=True)
-
             result = torch.cat([x, medium_kv, static_kv], dim=1)
             
         return result.reshape(B, -1, N, D)
@@ -467,7 +482,7 @@ class MaskManager:
         self.restored_x_dict.clear()
         if self.offload_manager is not None:
             self.offload_manager.clear()
-            print("[MaskManager] Cleared all offload buffers and caches", flush=True)
+            _tqdm_write(f"{_GRAY}[MaskManager] Cleared all offload buffers and caches.{_RESET}")
         torch.cuda.reset_peak_memory_stats()
         self.max_memory = 0
         self.memory_tracker = MemoryTracker()  # 重置内存跟踪器
@@ -502,34 +517,58 @@ class MaskManager:
         self._update_memory_stats()
     
     def _update_memory_stats(self):
-        """每5步/rank0 打印一行关键运行状态。"""
+        """每步更新彩色 level 块状条 + postfix；仅在 cooldown 前打印一次完整内存报告。"""
         timestep = get_timestep() or 0
-        if timestep % 5 != 0 and timestep > 3 and self.step_level != 3:
+        level    = self.step_level
+        lc       = _LEVEL_COLOR[level]
+
+        alloc     = torch.cuda.memory_allocated()     / 1024**3
+        seq_ratio = (
+            self.get_seq_len() / self.full_seq_len * 100
+            if self.full_seq_len else 100.0
+        )
+
+        # ── 追加一格彩色方块到 level_bar ─────────────────────────────
+        try:
+            blocks    = GlobalEnv.get_envs("step_blocks") + f"{lc}\u2588{_RESET}"
+            GlobalEnv.set_envs("step_blocks", blocks)
+            GlobalEnv.get_envs("level_bar").set_description_str(blocks, refresh=True)
+        except (KeyError, AttributeError):
+            pass
+
+        # ── 更新主进度条 postfix ──────────────────────────────────────
+        try:
+            GlobalEnv.get_envs("pbar").set_postfix_str(
+                f"L{level}  seq={seq_ratio:.0f}%  GPU={alloc:.1f}GB",
+                refresh=False,
+            )
+        except (KeyError, AttributeError):
+            pass
+
+        # ── 仅在 cooldown 前（最后一个 active 步）打印一次完整内存报告 ──
+        cooldown_boundary = self.num_inference_steps - self.cooldown_steps
+        if timestep != cooldown_boundary:
             return
 
-        om = self.offload_manager
+        peak = torch.cuda.max_memory_allocated() / 1024**3
+        om   = self.offload_manager
         if om is not None and om.is_ready():
-            s = om.memory_stats()
+            s       = om.memory_stats()
             cpu_gb  = s["cpu_pinned_bytes"]        / 1024**3
             fgpu_gb = s["gpu_fetch_staging_bytes"] / 1024**3
             sgpu_gb = s["gpu_store_staging_bytes"] / 1024**3
-            alloc   = s["gpu_allocated_bytes"]     / 1024**3
-            peak    = s["gpu_peak_bytes"]          / 1024**3
-            print(
-                f"[Step {timestep:3d}|L{self.step_level}] "
-                f"GPU alloc {alloc:.2f}GB  peak {peak:.2f}GB | "
-                f"offload  CPU {cpu_gb:.2f}GB  "
+            saved   = max(0.0, cpu_gb - fgpu_gb - sgpu_gb)
+            _tqdm_write(
+                f"\n{_BOLD}[Memory @ cooldown boundary]{_RESET}  "
+                f"GPU {alloc:.2f}GB  peak {peak:.2f}GB  |  "
+                f"{_CYAN}offload{_RESET} CPU {cpu_gb:.2f}GB  "
                 f"fetch-stg {fgpu_gb:.2f}GB  store-stg {sgpu_gb:.2f}GB  "
-                f"saved {max(0.0, cpu_gb - fgpu_gb - sgpu_gb):.2f}GB",
-                flush=True,
+                f"{_GREEN}saved {saved:.2f}GB{_RESET}"
             )
         else:
-            alloc = torch.cuda.memory_allocated() / 1024**3
-            peak  = torch.cuda.max_memory_allocated() / 1024**3
-            print(
-                f"[Step {timestep:3d}|L{self.step_level}] "
-                f"GPU alloc {alloc:.2f}GB  peak {peak:.2f}GB",
-                flush=True,
+            _tqdm_write(
+                f"\n{_BOLD}[Memory @ cooldown boundary]{_RESET}  "
+                f"GPU alloc {alloc:.2f}GB  peak {peak:.2f}GB"
             )
     
     def print_memory_stats(self):
@@ -539,7 +578,9 @@ class MaskManager:
 # ================================ APIs =================================
         
 def init_mask_manager(patch_size, seq_len, num_inference_steps, layer_num,
-                      offload: bool = False) -> MaskManager:
+                      offload: bool = False,
+                      offload_full_shape: Optional[tuple] = None,
+                      offload_conds: Optional[List[str]] = None) -> MaskManager:
     """
     Create and register the global WAN MaskManager.
 
@@ -556,11 +597,33 @@ def init_mask_manager(patch_size, seq_len, num_inference_steps, layer_num,
     offload : bool, optional
         When *True*, cache entries are stored in CPU pinned memory and
         prefetched back with a dual-stream pipeline.  Defaults to *False*.
+    offload_full_shape : tuple, optional
+        Maximum KV shape per layer, e.g. (2, 32760, 1536) for Wan-14B.
+        flat_full = prod(full_shape[:-1]), head_dim = full_shape[-1].
+        Required when offload=True.
+    offload_conds : list of str, optional
+        Cond identifiers to pre-allocate, e.g. ["0", "1"].
+        Defaults to ["0", "1"] when offload=True.
     """
     offload_manager: Optional[OffloadManager] = None
     if offload and torch.cuda.is_available():
         from jano.offload_manager import init_offload_manager
         offload_manager = init_offload_manager()
+        if offload_full_shape is not None:
+            conds = offload_conds if offload_conds is not None else ["0", "1"]
+            offload_manager.preallocate(
+                layer_num=layer_num,
+                full_shape=offload_full_shape,
+                full_dtype=torch.bfloat16,
+                conds=conds,
+            )
+        else:
+            print(
+                "[init_mask_manager] WARNING: offload=True but offload_full_shape not set.\n"
+                "  Pool will be allocated lazily on first store_async (old behaviour).\n"
+                "  Pass offload_full_shape=(B, max_tokens, hidden) at init to avoid this.",
+                flush=True,
+            )
 
     mask_manager = MaskManager(patch_size, seq_len, num_inference_steps, layer_num,
                                offload_manager=offload_manager)

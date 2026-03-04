@@ -8,7 +8,9 @@ from datetime import datetime
 
 warnings.filterwarnings('ignore')
 
+import json
 import random
+import time
 
 import torch
 import torch.distributed as dist
@@ -33,8 +35,8 @@ from utils.quality_metric import evaluate_quality_with_origin
 # 主体
 # PROMPT = "Two cats standing still on a spotlighted stage."
 # PROMPT = "Two cats in comfy boxing gear and bright gloves standing still on a spotlighted stage."
-# PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
-PROMPT = "Hare in snow."
+PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
+# PROMPT = "Hare in snow."
 # PROMPT = "Two beetles traverse dew-heavy moss, droplets popping free and rolling downhill as antennae test the carpeted route."
 # 高动态
 # PROMPT = "A couple in formal evening wear going home get caught in a heavy downpour with umbrellas, zoom in"
@@ -127,6 +129,45 @@ EXAMPLE_PROMPT = {
             "在一个欢乐而充满节日气氛的场景中，穿着鲜艳红色春服的小女孩正与她的可爱卡通蛇嬉戏。她的春服上绣着金色吉祥图案，散发着喜庆的气息，脸上洋溢着灿烂的笑容。蛇身呈现出亮眼的绿色，形状圆润，宽大的眼睛让它显得既友善又幽默。小女孩欢快地用手轻轻抚摸着蛇的头部，共同享受着这温馨的时刻。周围五彩斑斓的灯笼和彩带装饰着环境，阳光透过洒在她们身上，营造出一个充满友爱与幸福的新年氛围。"
     }
 }
+
+
+def save_run_config(args, output_dir: str):
+    """将本次运行的所有参数保存为 JSON 文件"""
+    config = {
+        "run_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "tag": TAG,
+        "prompt": PROMPT,
+        "model_path": MODEL_PATH,
+        "model_id": model_id,
+        "jano": {
+            "enable": bool(ENABLE_JANO),
+            "offload_kv": bool(OFFLOAD_KV),
+            "t_weight": T_WEIGHT,
+            "diffusion_strength": DIFFUSION_STENGTH,
+            "diffusion_distance": DIFFUSION_DISTANCE,
+            "analyze_block_size": list(ANALYZE_BLOCK_SIZE),
+            "static_thresh": STATIC_THRESH,
+            "medium_thresh": MEDIUM_THRESH,
+            "warmup_steps": WARMUP,
+        },
+        "generation": {
+            "task": args.task,
+            "size": args.size,
+            "frame_num": args.frame_num,
+            "sample_steps": args.sample_steps,
+            "sample_shift": args.sample_shift,
+            "sample_solver": args.sample_solver,
+            "sample_guide_scale": args.sample_guide_scale,
+            "base_seed": args.base_seed,
+            "offload_model": args.offload_model,
+            "t5_cpu": args.t5_cpu,
+        },
+    }
+    os.makedirs(output_dir, exist_ok=True)
+    config_path = os.path.join(output_dir, f"{TAG}_run_config.json")
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+    return config_path
 
 
 def _validate_args(args):
@@ -362,9 +403,32 @@ def generate(args):
     #     logger.info("Init cfg group.")s
     
     _init_logging(rank)
-    
+
+    # ── 运行配置摘要 ──────────────────────────────────────────────
+    if rank == 0:
+        sep = "=" * 60
+        logging.info(sep)
+        logging.info("  Jano WAN Generation")
+        logging.info(sep)
+        logging.info(f"  TAG            : {TAG}")
+        logging.info(f"  Model          : {MODEL_PATH} ({model_id})")
+        logging.info(f"  Task           : {args.task}  Size: {args.size}")
+        logging.info(f"  Frames         : {args.frame_num}  Steps: {args.sample_steps}  Seed: {args.base_seed}")
+        logging.info(f"  Solver         : {args.sample_solver}  Shift: {args.sample_shift}  CFG: {args.sample_guide_scale}")
+        logging.info(f"  Output dir     : {OUTPUT_DIR}")
+        logging.info(sep)
+        logging.info("  Jano Config")
+        logging.info(f"  Enable         : {bool(ENABLE_JANO)}  OffloadKV: {bool(OFFLOAD_KV)}")
+        logging.info(f"  Block size     : {ANALYZE_BLOCK_SIZE}")
+        logging.info(f"  Warmup steps   : {WARMUP}")
+        logging.info(f"  t_weight       : {T_WEIGHT}  d_strength: {DIFFUSION_STENGTH}  d_distance: {DIFFUSION_DISTANCE}")
+        logging.info(f"  static_thresh  : {STATIC_THRESH}  medium_thresh: {MEDIUM_THRESH}")
+        logging.info(sep)
+        logging.info(f"  Prompt         : {PROMPT}")
+        logging.info(sep)
+
     # tag在起任务的脚本srun.sh中设置，用于备注本次任务的关键信息，便于结果输出和识别
-        
+
     init_jano(
         enable=ENABLE_JANO,
         model='14B' if '14B' in args.task else '1.3B',
@@ -383,6 +447,15 @@ def generate(args):
         static_interval = 6,
         offload=OFFLOAD_KV,
     )
+
+    # 保存运行参数
+    config_path = None
+    if rank == 0:
+        config_path = save_run_config(args, OUTPUT_DIR)
+        logging.info(f"Run config saved to: {config_path}")
+
+    # 记录生成开始时间
+    gen_start_time = time.perf_counter()
 
     if args.offload_model is None:
         args.offload_model = False if world_size > 1 else True
@@ -697,9 +770,34 @@ def generate(args):
                 normalize=True,
                 value_range=(-1, 1))
             
+        quality_result = None
         if TAG != "ori":
-            evaluate_quality_with_origin(args.save_file, TAG)
-            
+            quality_result = evaluate_quality_with_origin(args.save_file, TAG)
+
+    # ── 最终摘要 ──────────────────────────────────────────────────
+    gen_elapsed = time.perf_counter() - gen_start_time
+    if rank == 0:
+        sep = "=" * 60
+        logging.info(sep)
+        logging.info("  Generation Complete — Summary")
+        logging.info(sep)
+        logging.info(f"  Total wall time : {gen_elapsed:.1f} s  ({gen_elapsed/60:.2f} min)")
+        logging.info(f"  Output video    : {args.save_file}")
+        if config_path:
+            logging.info(f"  Run config      : {config_path}")
+        time_stats_path = f"{OUTPUT_DIR}/{TAG}_time_stats.txt"
+        logging.info(f"  Timing stats    : {time_stats_path}")
+        if quality_result is not None:
+            metrics = quality_result.get("metrics", {})
+            logging.info("  Quality metrics vs. baseline:")
+            if metrics.get("psnr") is not None:
+                logging.info(f"    PSNR  : {metrics['psnr']:.4f} dB")
+            if metrics.get("ssim") is not None:
+                logging.info(f"    SSIM  : {metrics['ssim']:.4f}")
+            if metrics.get("lpips") is not None:
+                logging.info(f"    LPIPS : {metrics['lpips']:.4f}")
+        logging.info(sep)
+
     logging.info("Finished.")
 
 
