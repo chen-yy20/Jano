@@ -29,15 +29,14 @@ Prompt: `A photorealistic cute cat, wearing a simple blue shirt, standing agains
     <td align="center"><img src="assets/flux/teacache/photorealistic_cute_cat,_wearing/TEA0.2_photorealistic_cute_cat,_wearing_seed42.png" width="180"></td>
     <td align="center"><img src="assets/flux/toca/photorealistic_cute_cat,_wearing/toca_photorealistic_cute_cat,_wearing_seed42.png" width="180"></td>
   </tr>
+  <tr>
+    <td align="center">36.14 s<br>1.00×<br>N/A</td>
+    <td align="center">19.33 s<br>1.87×<br>PSNR 28.19 / SSIM 0.940 / LPIPS 0.088</td>
+    <td align="center">23.81 s<br>1.52×<br>PSNR 23.87 / SSIM 0.898 / LPIPS 0.137</td>
+    <td align="center">23.36 s<br>1.55×<br>PSNR 23.60 / SSIM 0.908 / LPIPS 0.107</td>
+    <td align="center">19.38 s<br>1.86×<br>PSNR 14.79 / SSIM 0.761 / LPIPS 0.379</td>
+  </tr>
 </table>
-
-| Method | generate_e2e | Speedup vs ORI | Quality vs ORI |
-|---|---:|---:|---|
-| ORI | 36.14 s | 1.00x | N/A |
-| Jano | 19.33 s | 1.87x | PSNR 28.19 / SSIM 0.940 / LPIPS 0.088 |
-| PAB | 23.81 s | 1.52x | PSNR 23.87 / SSIM 0.898 / LPIPS 0.137 |
-| TeaCache | 23.36 s | 1.55x | PSNR 23.60 / SSIM 0.908 / LPIPS 0.107 |
-| ToCA | 19.38 s | 1.86x | PSNR 14.79 / SSIM 0.761 / LPIPS 0.379 |
 
 ### Wan2.1-1.3B (Text-to-Video)
 
@@ -51,25 +50,40 @@ Prompt: `Two anthropomorphic cats in comfy boxing gear and bright gloves fight i
 | TeaCache | 106.10 s | 1.56x | PSNR 21.28 / SSIM 0.854 / LPIPS 0.100 |
 | ToCA | 71.39 s | 2.32x | PSNR 13.97 / SSIM 0.670 / LPIPS 0.347 |
 
-**Jano**
-
-<video src="assets/wan/1.3B/jano/two_anthropomorphic_cats_comfy/jano_offload0_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="640"></video>
-
-**ORI**
-
-<video src="assets/wan/1.3B/ori/two_anthropomorphic_cats_comfy/ori_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="640"></video>
-
-**PAB**
-
-<video src="assets/wan/1.3B/pab/two_anthropomorphic_cats_comfy/s5c8_i4_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="640"></video>
-
-**TeaCache**
-
-<video src="assets/wan/1.3B/teacache/two_anthropomorphic_cats_comfy/thresh0.1_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="640"></video>
-
-**ToCA**
-
-<video src="assets/wan/1.3B/toca/two_anthropomorphic_cats_comfy/toca_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="640"></video>
+<table>
+  <tr>
+    <td align="center">
+      <b>ORI</b><br>
+      <video src="assets/wan/1.3B/ori/two_anthropomorphic_cats_comfy/ori_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="360"></video><br>
+      165.60 s | 1.00× | N/A
+    </td>
+    <td align="center">
+      <b>Jano</b><br>
+      <video src="assets/wan/1.3B/jano/two_anthropomorphic_cats_comfy/jano_offload0_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="360"></video><br>
+      83.94 s | 1.97× | PSNR 17.96 / SSIM 0.782 / LPIPS 0.184
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <b>PAB</b><br>
+      <video src="assets/wan/1.3B/pab/two_anthropomorphic_cats_comfy/s5c8_i4_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="360"></video><br>
+      139.94 s | 1.18× | PSNR 16.08 / SSIM 0.734 / LPIPS 0.243
+    </td>
+    <td align="center">
+      <b>TeaCache</b><br>
+      <video src="assets/wan/1.3B/teacache/two_anthropomorphic_cats_comfy/thresh0.1_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="360"></video><br>
+      106.10 s | 1.56× | PSNR 21.28 / SSIM 0.854 / LPIPS 0.100
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <b>ToCA</b><br>
+      <video src="assets/wan/1.3B/toca/two_anthropomorphic_cats_comfy/toca_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="360"></video><br>
+      71.39 s | 2.32× | PSNR 13.97 / SSIM 0.670 / LPIPS 0.347
+    </td>
+    <td></td>
+  </tr>
+</table>
 
 Jano supports the following workloads:
 
