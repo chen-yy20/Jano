@@ -1,0 +1,90 @@
+{
+  "run_time": "2026-03-06 14:29:17",
+  "tag": "jano",
+  "parameters": {
+    "model": "flux",
+    "method": "jano",
+    "model_path": "/home/zhongrx/cyy/model/Flux-1",
+    "prompt": "A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background.",
+    "height": 1024,
+    "width": 1024,
+    "num_inference_steps": 50,
+    "guidance_scale": 3.5,
+    "seeds": [
+      42,
+      43,
+      44,
+      45
+    ],
+    "enable_jano": 1,
+    "warmup": 7,
+    "static_thresh": 0.2,
+    "medium_thresh": 0.4
+  },
+  "timing_stats": {
+    "full_jano_attn": {
+      "min_ms": 1.207,
+      "max_ms": 439.3206,
+      "avg_ms": 3.6733,
+      "samples": 11400
+    },
+    "analyze": {
+      "min_ms": 3.4822,
+      "max_ms": 4.2031,
+      "avg_ms": 3.7797,
+      "samples": 4
+    },
+    "generate_e2e": {
+      "min_ms": 17488.5353,
+      "max_ms": 20544.4354,
+      "avg_ms": 19330.0581,
+      "samples": 4
+    },
+    "full_DiT": {
+      "min_ms": 720.8588,
+      "max_ms": 726.2084,
+      "avg_ms": 724.1292,
+      "samples": 36
+    },
+    "3_DiT": {
+      "min_ms": 744.3583,
+      "max_ms": 774.709,
+      "avg_ms": 750.4388,
+      "samples": 16
+    },
+    "1_DiT": {
+      "min_ms": 147.8068,
+      "max_ms": 1104.755,
+      "avg_ms": 215.8143,
+      "samples": 120
+    },
+    "2_DiT": {
+      "min_ms": 247.5306,
+      "max_ms": 1238.2351,
+      "avg_ms": 460.3266,
+      "samples": 28
+    }
+  },
+  "quality_metrics": {
+    "seed42": {
+      "psnr": 31.041048220498787,
+      "ssim": 0.9648888010622318,
+      "lpips": 0.054375506937503815
+    },
+    "seed43": {
+      "psnr": 26.652490909046357,
+      "ssim": 0.9247935598862078,
+      "lpips": 0.11693298816680908
+    },
+    "seed44": {
+      "psnr": 27.98380244602476,
+      "ssim": 0.9379490270709426,
+      "lpips": 0.08484946191310883
+    },
+    "seed45": {
+      "psnr": 27.08525266059343,
+      "ssim": 0.9309631520970139,
+      "lpips": 0.095884770154953
+    }
+  }
+}

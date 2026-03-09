@@ -1,0 +1,71 @@
+{
+  "run_time": "2026-03-06 15:23:49",
+  "tag": "w3s8",
+  "parameters": {
+    "model": "flux",
+    "method": "pab",
+    "model_path": "/home/zhongrx/cyy/model/Flux-1",
+    "prompt": "A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background.",
+    "height": 1024,
+    "width": 1024,
+    "num_inference_steps": 50,
+    "guidance_scale": 3.5,
+    "seeds": [
+      42,
+      43,
+      44,
+      45
+    ],
+    "enable_pab": 1,
+    "warmup": 3,
+    "self_range": 8
+  },
+  "timing_stats": {
+    "full_origin_attn": {
+      "min_ms": 7.0162,
+      "max_ms": 8.4793,
+      "avg_ms": 7.4043,
+      "samples": 2964
+    },
+    "dit": {
+      "min_ms": 364.3626,
+      "max_ms": 796.4971,
+      "avg_ms": 475.8655,
+      "samples": 200
+    },
+    "generate_e2e": {
+      "min_ms": 23803.9054,
+      "max_ms": 23816.5352,
+      "avg_ms": 23807.467,
+      "samples": 4
+    },
+    "pab_attn": {
+      "min_ms": 0.0095,
+      "max_ms": 9.4423,
+      "avg_ms": 1.9584,
+      "samples": 11400
+    }
+  },
+  "quality_metrics": {
+    "seed42": {
+      "psnr": 24.180002851068206,
+      "ssim": 0.9109654440976273,
+      "lpips": 0.11858992278575897
+    },
+    "seed43": {
+      "psnr": 23.64003222868828,
+      "ssim": 0.8993740097562712,
+      "lpips": 0.13824562728405
+    },
+    "seed44": {
+      "psnr": 24.7528847553977,
+      "ssim": 0.9099669655690957,
+      "lpips": 0.11517450213432312
+    },
+    "seed45": {
+      "psnr": 22.9064467090347,
+      "ssim": 0.8697663531176335,
+      "lpips": 0.17494913935661316
+    }
+  }
+}

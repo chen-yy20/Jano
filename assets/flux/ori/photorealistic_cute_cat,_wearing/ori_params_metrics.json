@@ -1,0 +1,52 @@
+{
+  "run_time": "2026-03-06 14:19:10",
+  "tag": "ori",
+  "parameters": {
+    "model": "flux",
+    "method": "ori",
+    "model_path": "/home/zhongrx/cyy/model/Flux-1",
+    "prompt": "A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background.",
+    "height": 1024,
+    "width": 1024,
+    "num_inference_steps": 50,
+    "guidance_scale": 3.5,
+    "seeds": [
+      42,
+      43,
+      44,
+      45
+    ],
+    "enable_jano": 0,
+    "warmup": 7,
+    "diffusion_strength": 0.8,
+    "diffusion_distance": 2,
+    "static_thresh": 0.2,
+    "medium_thresh": 0.4
+  },
+  "timing_stats": {
+    "full_origin_attn": {
+      "min_ms": 5.8966,
+      "max_ms": 13.1582,
+      "avg_ms": 6.2706,
+      "samples": 11400
+    },
+    "generate_e2e": {
+      "min_ms": 36123.5146,
+      "max_ms": 36159.2114,
+      "avg_ms": 36142.2557,
+      "samples": 4
+    },
+    "full_DiT": {
+      "min_ms": 720.6786,
+      "max_ms": 742.11,
+      "avg_ms": 721.4197,
+      "samples": 200
+    }
+  },
+  "quality_metrics": {
+    "seed42": null,
+    "seed43": null,
+    "seed44": null,
+    "seed45": null
+  }
+}

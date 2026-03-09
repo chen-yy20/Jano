@@ -1,0 +1,75 @@
+{
+  "run_time": "2026-03-06 17:18:58",
+  "tag": "jano_offload0",
+  "parameters": {
+    "model": "wan",
+    "method": "jano",
+    "model_id": "1.3B",
+    "model_path": "/home/zhongrx/cyy/Wan2.1/Wan2.1-T2V-1.3B",
+    "prompt": "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage.",
+    "task": "t2v-1.3B",
+    "size": "832*480",
+    "frame_num": 81,
+    "sample_steps": 50,
+    "sample_shift": 5.0,
+    "sample_solver": "unipc",
+    "sample_guide_scale": 5.0,
+    "base_seed": 42,
+    "enable_jano": true,
+    "offload_kv": false,
+    "t_weight": 0.7,
+    "diffusion_strength": 0.8,
+    "diffusion_distance": 1,
+    "analyze_block_size": [
+      7,
+      6,
+      8
+    ],
+    "static_thresh": 0.2,
+    "medium_thresh": 0.6,
+    "warmup": 6
+  },
+  "timing_stats": {
+    "analyze": {
+      "min_ms": 139.215,
+      "max_ms": 139.215,
+      "avg_ms": 139.215,
+      "samples": 1
+    },
+    "generate_e2e": {
+      "min_ms": 83936.0042,
+      "max_ms": 83936.0042,
+      "avg_ms": 83936.0042,
+      "samples": 1
+    },
+    "full_dit_fw": {
+      "min_ms": 3286.4323,
+      "max_ms": 3467.2142,
+      "avg_ms": 3309.9856,
+      "samples": 10
+    },
+    "3_dit_fw": {
+      "min_ms": 3415.5456,
+      "max_ms": 3520.024,
+      "avg_ms": 3447.5505,
+      "samples": 7
+    },
+    "1_dit_fw": {
+      "min_ms": 363.8099,
+      "max_ms": 383.5755,
+      "avg_ms": 367.9388,
+      "samples": 26
+    },
+    "2_dit_fw": {
+      "min_ms": 2044.6624,
+      "max_ms": 2116.71,
+      "avg_ms": 2077.9852,
+      "samples": 7
+    }
+  },
+  "quality_metrics": {
+    "psnr": 17.95906226022336,
+    "ssim": 0.782084114504513,
+    "lpips": 0.18396906849042868
+  }
+}

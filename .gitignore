@@ -1,9 +1,7 @@
 wan_bckup
-*.png
 *.log
 *.pt
 *.npz
-*.json
 note.md
 wan_results/
 evaluation
@@ -23,6 +21,7 @@ Thumbs.db
 *_time_stats.txt
 *_quality_metrics.json
 results/
+traces/
 
 # Model checkpoints and data
 *.safetensors

@@ -1,0 +1,35 @@
+{
+  "run_time": "2026-03-09 14:52:04",
+  "tag": "thresh0.2",
+  "parameters": {
+    "model": "wan",
+    "method": "teacache",
+    "model_id": "1.3B",
+    "model_path": "/home/zhongrx/cyy/Wan2.1/Wan2.1-T2V-1.3B",
+    "prompt": "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage.",
+    "task": "t2v-1.3B",
+    "size": "832*480",
+    "base_seed": 42,
+    "enable_teacache": true,
+    "thresh": 0.2
+  },
+  "timing_stats": {
+    "generate_e2e": {
+      "min_ms": 70577.6938,
+      "max_ms": 70577.6938,
+      "avg_ms": 70577.6938,
+      "samples": 1
+    },
+    "full_DiT-fw": {
+      "min_ms": 0.3332,
+      "max_ms": 3384.8227,
+      "avg_ms": 1369.1736,
+      "samples": 50
+    }
+  },
+  "quality_metrics": {
+    "psnr": 14.39761328683451,
+    "ssim": 0.6564709027387545,
+    "lpips": 0.359802923452707
+  }
+}
