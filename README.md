@@ -30,7 +30,7 @@ Prompt: `A photorealistic cute cat, wearing a simple blue shirt, standing agains
     <td align="center"><img src="assets/flux/toca/photorealistic_cute_cat,_wearing/toca_photorealistic_cute_cat,_wearing_seed42.png" width="180"></td>
   </tr>
   <tr>
-    <td align="center">36.14 s<br>1.00×<br>N/A</td>
+    <td align="center">36.14 s<br>1.00×<br>PSNR ----- / SSIM ----- / LPIPS -----</td>
     <td align="center">19.33 s<br>1.87×<br>PSNR 28.19 / SSIM 0.940 / LPIPS 0.088</td>
     <td align="center">23.81 s<br>1.52×<br>PSNR 23.87 / SSIM 0.898 / LPIPS 0.137</td>
     <td align="center">23.36 s<br>1.55×<br>PSNR 23.60 / SSIM 0.908 / LPIPS 0.107</td>
@@ -42,43 +42,35 @@ Prompt: `A photorealistic cute cat, wearing a simple blue shirt, standing agains
 
 Prompt: `Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage.`
 
-| Method | generate_e2e | Speedup vs ORI | Quality vs ORI |
-|---|---:|---:|---|
-| ORI | 165.60 s | 1.00x | N/A |
-| Jano | 83.94 s | 1.97x | PSNR 17.96 / SSIM 0.782 / LPIPS 0.184 |
-| PAB | 139.94 s | 1.18x | PSNR 16.08 / SSIM 0.734 / LPIPS 0.243 |
-| TeaCache | 106.10 s | 1.56x | PSNR 21.28 / SSIM 0.854 / LPIPS 0.100 |
-| ToCA | 71.39 s | 2.32x | PSNR 13.97 / SSIM 0.670 / LPIPS 0.347 |
-
 <table>
   <tr>
     <td align="center">
       <b>ORI</b><br>
-      <video src="assets/wan/1.3B/ori/two_anthropomorphic_cats_comfy/ori_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="360"></video><br>
+      <video src="https://github.com/user-attachments/assets/6da3c726-d5de-49f5-a96f-d08a54795a5d" controls muted loop width="360"></video><br>
       165.60 s | 1.00× | N/A
     </td>
     <td align="center">
       <b>Jano</b><br>
-      <video src="assets/wan/1.3B/jano/two_anthropomorphic_cats_comfy/jano_offload0_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="360"></video><br>
+      <video src="https://github.com/user-attachments/assets/8caf9810-f7ed-4b28-8240-e3f6364077c8" controls muted loop width="360"></video><br>
       83.94 s | 1.97× | PSNR 17.96 / SSIM 0.782 / LPIPS 0.184
     </td>
   </tr>
   <tr>
     <td align="center">
       <b>PAB</b><br>
-      <video src="assets/wan/1.3B/pab/two_anthropomorphic_cats_comfy/s5c8_i4_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="360"></video><br>
+      <video src="https://github.com/user-attachments/assets/8bc47626-a647-4148-bf8c-8bf13f917146" controls muted loop width="360"></video><br>
       139.94 s | 1.18× | PSNR 16.08 / SSIM 0.734 / LPIPS 0.243
     </td>
     <td align="center">
       <b>TeaCache</b><br>
-      <video src="assets/wan/1.3B/teacache/two_anthropomorphic_cats_comfy/thresh0.1_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="360"></video><br>
+      <video src="https://github.com/user-attachments/assets/9e66b02a-d568-4aa4-b128-9762d45b2875" controls muted loop width="360"></video><br>
       106.10 s | 1.56× | PSNR 21.28 / SSIM 0.854 / LPIPS 0.100
     </td>
   </tr>
   <tr>
     <td align="center">
       <b>ToCA</b><br>
-      <video src="assets/wan/1.3B/toca/two_anthropomorphic_cats_comfy/toca_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="360"></video><br>
+      <video src="https://github.com/user-attachments/assets/6aca050f-8b88-4fb6-ac04-5f8705a38dc8" controls muted loop width="360"></video><br>
       71.39 s | 2.32× | PSNR 13.97 / SSIM 0.670 / LPIPS 0.347
     </td>
     <td></td>
