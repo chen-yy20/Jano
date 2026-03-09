@@ -46,31 +46,31 @@ Prompt: `Two anthropomorphic cats in comfy boxing gear and bright gloves fight i
   <tr>
     <td align="center">
       <b>ORI</b><br>
-      <video src="https://github.com/user-attachments/assets/6da3c726-d5de-49f5-a96f-d08a54795a5d" controls muted loop width="360"></video><br>
+      <video src="https://github.com/user-attachments/assets/6da3c726-d5de-49f5-a96f-d08a54795a5d" controls muted loop width="180"></video><br>
       165.60 s | 1.00× | N/A
     </td>
     <td align="center">
       <b>Jano</b><br>
-      <video src="https://github.com/user-attachments/assets/8caf9810-f7ed-4b28-8240-e3f6364077c8" controls muted loop width="360"></video><br>
+      <video src="https://github.com/user-attachments/assets/8caf9810-f7ed-4b28-8240-e3f6364077c8" controls muted loop width="180"></video><br>
       83.94 s | 1.97× | PSNR 17.96 / SSIM 0.782 / LPIPS 0.184
     </td>
   </tr>
   <tr>
     <td align="center">
       <b>PAB</b><br>
-      <video src="https://github.com/user-attachments/assets/8bc47626-a647-4148-bf8c-8bf13f917146" controls muted loop width="360"></video><br>
+      <video src="https://github.com/user-attachments/assets/8bc47626-a647-4148-bf8c-8bf13f917146" controls muted loop width="180"></video><br>
       139.94 s | 1.18× | PSNR 16.08 / SSIM 0.734 / LPIPS 0.243
     </td>
     <td align="center">
       <b>TeaCache</b><br>
-      <video src="https://github.com/user-attachments/assets/9e66b02a-d568-4aa4-b128-9762d45b2875" controls muted loop width="360"></video><br>
+      <video src="https://github.com/user-attachments/assets/9e66b02a-d568-4aa4-b128-9762d45b2875" controls muted loop width="180"></video><br>
       106.10 s | 1.56× | PSNR 21.28 / SSIM 0.854 / LPIPS 0.100
     </td>
   </tr>
   <tr>
     <td align="center">
       <b>ToCA</b><br>
-      <video src="https://github.com/user-attachments/assets/6aca050f-8b88-4fb6-ac04-5f8705a38dc8" controls muted loop width="360"></video><br>
+      <video src="https://github.com/user-attachments/assets/6aca050f-8b88-4fb6-ac04-5f8705a38dc8" controls muted loop width="180"></video><br>
       71.39 s | 2.32× | PSNR 13.97 / SSIM 0.670 / LPIPS 0.347
     </td>
     <td></td>
