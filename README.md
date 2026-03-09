@@ -2,6 +2,36 @@
 
 **Jano** is an inference acceleration framework for diffusion-based video/image generation models. It profiles the spatio-temporal dynamics of the latent space during a short warm-up phase and then selectively skips computations for low-dynamic regions, achieving significant speedup with minimal quality degradation.
 
+## Showcase / 效果展示
+
+The following examples are from `./assets`, with runtime (`generate_e2e`) and quality metrics from the corresponding JSON files.
+
+以下展示来自 `./assets`，时间（`generate_e2e`）与质量指标均读取自对应 JSON 文件。
+
+### FLUX.1-dev (Text-to-Image)
+
+Prompt: `A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background.`
+
+| Method | Output (seed=42) | generate_e2e | Quality vs ORI |
+|---|---|---:|---|
+| ORI | ![](assets/flux/ori/photorealistic_cute_cat,_wearing/ori_photorealistic_cute_cat,_wearing_seed42.png) | 36.14 s | N/A |
+| Jano | ![](assets/flux/jano/photorealistic_cute_cat,_wearing/jano_photorealistic_cute_cat,_wearing_seed42.png) | 19.33 s | PSNR 28.19 / SSIM 0.940 / LPIPS 0.088 |
+| PAB (w5s2) | ![](assets/flux/pab/photorealistic_cute_cat,_wearing/w5s2_photorealistic_cute_cat,_wearing_seed42.png) | 29.30 s | PSNR 34.73 / SSIM 0.980 / LPIPS 0.017 |
+| TeaCache (0.2) | ![](assets/flux/teacache/photorealistic_cute_cat,_wearing/TEA0.2_photorealistic_cute_cat,_wearing_seed42.png) | 23.36 s | PSNR 23.60 / SSIM 0.908 / LPIPS 0.107 |
+| ToCA | ![](assets/flux/toca/photorealistic_cute_cat,_wearing/toca_photorealistic_cute_cat,_wearing_seed42.png) | 19.38 s | PSNR 14.79 / SSIM 0.761 / LPIPS 0.379 |
+
+### Wan2.1-1.3B (Text-to-Video)
+
+Prompt: `Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage.`
+
+| Method | Video | generate_e2e | Quality vs ORI |
+|---|---|---:|---|
+| ORI | [mp4](assets/wan/1.3B/ori/two_anthropomorphic_cats_comfy/ori_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4) | 165.60 s | N/A |
+| Jano | [mp4](assets/wan/1.3B/jano/two_anthropomorphic_cats_comfy/jano_offload0_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4) | 83.94 s | PSNR 17.96 / SSIM 0.782 / LPIPS 0.184 |
+| PAB (s2c5_i4) | [mp4](assets/wan/1.3B/pab/two_anthropomorphic_cats_comfy/s2c5_i4_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4) | 149.21 s | PSNR 18.52 / SSIM 0.803 / LPIPS 0.157 |
+| TeaCache (0.1) | [mp4](assets/wan/1.3B/teacache/two_anthropomorphic_cats_comfy/thresh0.1_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4) | 106.10 s | PSNR 21.28 / SSIM 0.854 / LPIPS 0.100 |
+| ToCA | [mp4](assets/wan/1.3B/toca/two_anthropomorphic_cats_comfy/toca_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4) | 71.39 s | PSNR 13.97 / SSIM 0.670 / LPIPS 0.347 |
+
 Jano supports the following workloads:
 
 | Model | Task |
