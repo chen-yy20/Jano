@@ -14,13 +14,30 @@ The following examples are from `./assets`, with runtime (`generate_e2e`) and qu
 
 Prompt: `A photorealistic cute cat, wearing a simple blue shirt, standing against a clear sky background.`
 
-| Method | Output (seed=42) | generate_e2e | Speedup vs ORI | Quality vs ORI |
-|---|---|---:|---:|---|
-| ORI | <img src="assets/flux/ori/photorealistic_cute_cat,_wearing/ori_photorealistic_cute_cat,_wearing_seed42.png" width="200"> | 36.14 s | 1.00x | N/A |
-| Jano | <img src="assets/flux/jano/photorealistic_cute_cat,_wearing/jano_photorealistic_cute_cat,_wearing_seed42.png" width="200"> | 19.33 s | 1.87x | PSNR 28.19 / SSIM 0.940 / LPIPS 0.088 |
-| PAB | <img src="assets/flux/pab/photorealistic_cute_cat,_wearing/w3s8_photorealistic_cute_cat,_wearing_seed42.png" width="200"> | 23.81 s | 1.52x | PSNR 23.87 / SSIM 0.898 / LPIPS 0.137 |
-| TeaCache | <img src="assets/flux/teacache/photorealistic_cute_cat,_wearing/TEA0.2_photorealistic_cute_cat,_wearing_seed42.png" width="200"> | 23.36 s | 1.55x | PSNR 23.60 / SSIM 0.908 / LPIPS 0.107 |
-| ToCA | <img src="assets/flux/toca/photorealistic_cute_cat,_wearing/toca_photorealistic_cute_cat,_wearing_seed42.png" width="200"> | 19.38 s | 1.86x | PSNR 14.79 / SSIM 0.761 / LPIPS 0.379 |
+<table>
+  <tr>
+    <th align="center">ORI</th>
+    <th align="center">Jano</th>
+    <th align="center">PAB</th>
+    <th align="center">TeaCache</th>
+    <th align="center">ToCA</th>
+  </tr>
+  <tr>
+    <td align="center"><img src="assets/flux/ori/photorealistic_cute_cat,_wearing/ori_photorealistic_cute_cat,_wearing_seed42.png" width="180"></td>
+    <td align="center"><img src="assets/flux/jano/photorealistic_cute_cat,_wearing/jano_photorealistic_cute_cat,_wearing_seed42.png" width="180"></td>
+    <td align="center"><img src="assets/flux/pab/photorealistic_cute_cat,_wearing/w3s8_photorealistic_cute_cat,_wearing_seed42.png" width="180"></td>
+    <td align="center"><img src="assets/flux/teacache/photorealistic_cute_cat,_wearing/TEA0.2_photorealistic_cute_cat,_wearing_seed42.png" width="180"></td>
+    <td align="center"><img src="assets/flux/toca/photorealistic_cute_cat,_wearing/toca_photorealistic_cute_cat,_wearing_seed42.png" width="180"></td>
+  </tr>
+</table>
+
+| Method | generate_e2e | Speedup vs ORI | Quality vs ORI |
+|---|---:|---:|---|
+| ORI | 36.14 s | 1.00x | N/A |
+| Jano | 19.33 s | 1.87x | PSNR 28.19 / SSIM 0.940 / LPIPS 0.088 |
+| PAB | 23.81 s | 1.52x | PSNR 23.87 / SSIM 0.898 / LPIPS 0.137 |
+| TeaCache | 23.36 s | 1.55x | PSNR 23.60 / SSIM 0.908 / LPIPS 0.107 |
+| ToCA | 19.38 s | 1.86x | PSNR 14.79 / SSIM 0.761 / LPIPS 0.379 |
 
 ### Wan2.1-1.3B (Text-to-Video)
 
