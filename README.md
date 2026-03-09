@@ -16,11 +16,11 @@ Prompt: `A photorealistic cute cat, wearing a simple blue shirt, standing agains
 
 | Method | Output (seed=42) | generate_e2e | Speedup vs ORI | Quality vs ORI |
 |---|---|---:|---:|---|
-| ORI | ![](assets/flux/ori/photorealistic_cute_cat,_wearing/ori_photorealistic_cute_cat,_wearing_seed42.png) | 36.14 s | 1.00x | N/A |
-| Jano | ![](assets/flux/jano/photorealistic_cute_cat,_wearing/jano_photorealistic_cute_cat,_wearing_seed42.png) | 19.33 s | 1.87x | PSNR 28.19 / SSIM 0.940 / LPIPS 0.088 |
-| PAB | ![](assets/flux/pab/photorealistic_cute_cat,_wearing/w3s8_photorealistic_cute_cat,_wearing_seed42.png) | 23.81 s | 1.52x | PSNR 23.87 / SSIM 0.898 / LPIPS 0.137 |
-| TeaCache | ![](assets/flux/teacache/photorealistic_cute_cat,_wearing/TEA0.2_photorealistic_cute_cat,_wearing_seed42.png) | 23.36 s | 1.55x | PSNR 23.60 / SSIM 0.908 / LPIPS 0.107 |
-| ToCA | ![](assets/flux/toca/photorealistic_cute_cat,_wearing/toca_photorealistic_cute_cat,_wearing_seed42.png) | 19.38 s | 1.86x | PSNR 14.79 / SSIM 0.761 / LPIPS 0.379 |
+| ORI | <img src="assets/flux/ori/photorealistic_cute_cat,_wearing/ori_photorealistic_cute_cat,_wearing_seed42.png" width="200"> | 36.14 s | 1.00x | N/A |
+| Jano | <img src="assets/flux/jano/photorealistic_cute_cat,_wearing/jano_photorealistic_cute_cat,_wearing_seed42.png" width="200"> | 19.33 s | 1.87x | PSNR 28.19 / SSIM 0.940 / LPIPS 0.088 |
+| PAB | <img src="assets/flux/pab/photorealistic_cute_cat,_wearing/w3s8_photorealistic_cute_cat,_wearing_seed42.png" width="200"> | 23.81 s | 1.52x | PSNR 23.87 / SSIM 0.898 / LPIPS 0.137 |
+| TeaCache | <img src="assets/flux/teacache/photorealistic_cute_cat,_wearing/TEA0.2_photorealistic_cute_cat,_wearing_seed42.png" width="200"> | 23.36 s | 1.55x | PSNR 23.60 / SSIM 0.908 / LPIPS 0.107 |
+| ToCA | <img src="assets/flux/toca/photorealistic_cute_cat,_wearing/toca_photorealistic_cute_cat,_wearing_seed42.png" width="200"> | 19.38 s | 1.86x | PSNR 14.79 / SSIM 0.761 / LPIPS 0.379 |
 
 ### Wan2.1-1.3B (Text-to-Video)
 
@@ -34,30 +34,25 @@ Prompt: `Two anthropomorphic cats in comfy boxing gear and bright gloves fight i
 | TeaCache | 106.10 s | 1.56x | PSNR 21.28 / SSIM 0.854 / LPIPS 0.100 |
 | ToCA | 71.39 s | 2.32x | PSNR 13.97 / SSIM 0.670 / LPIPS 0.347 |
 
-<table>
-      <tr>
-            <td colspan="2" align="center"><b>Jano (Main)</b></td>
-      </tr>
-      <tr>
-            <td colspan="2" align="center"><video src="assets/wan/1.3B/jano/two_anthropomorphic_cats_comfy/jano_offload0_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="760"></video></td>
-      </tr>
-      <tr>
-            <td><b>ORI</b></td>
-            <td><b>PAB</b></td>
-      </tr>
-      <tr>
-            <td><video src="assets/wan/1.3B/ori/two_anthropomorphic_cats_comfy/ori_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="360"></video></td>
-            <td><video src="assets/wan/1.3B/pab/two_anthropomorphic_cats_comfy/s5c8_i4_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="360"></video></td>
-      </tr>
-      <tr>
-            <td><b>TeaCache</b></td>
-            <td><b>ToCA</b></td>
-      </tr>
-      <tr>
-            <td><video src="assets/wan/1.3B/teacache/two_anthropomorphic_cats_comfy/thresh0.1_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="360"></video></td>
-            <td><video src="assets/wan/1.3B/toca/two_anthropomorphic_cats_comfy/toca_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="360"></video></td>
-      </tr>
-</table>
+**Jano**
+
+<video src="assets/wan/1.3B/jano/two_anthropomorphic_cats_comfy/jano_offload0_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="640"></video>
+
+**ORI**
+
+<video src="assets/wan/1.3B/ori/two_anthropomorphic_cats_comfy/ori_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="640"></video>
+
+**PAB**
+
+<video src="assets/wan/1.3B/pab/two_anthropomorphic_cats_comfy/s5c8_i4_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="640"></video>
+
+**TeaCache**
+
+<video src="assets/wan/1.3B/teacache/two_anthropomorphic_cats_comfy/thresh0.1_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="640"></video>
+
+**ToCA**
+
+<video src="assets/wan/1.3B/toca/two_anthropomorphic_cats_comfy/toca_two_anthropomorphic_cats_comfy_t2v-1.3B.mp4" controls muted loop width="640"></video>
 
 Jano supports the following workloads:
 
