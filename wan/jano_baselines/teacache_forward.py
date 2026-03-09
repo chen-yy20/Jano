@@ -24,6 +24,7 @@ from utils.timer import get_timer
 from jano.mask_manager.wan_mask_manager import get_mask_manager
 from jano.modules.wan.wan_t2v import WanT2V_jano
 from jano.stuff import get_timestep, get_masked_timer
+from jano.dist.parallel_state import get_cp_group
 from utils.envs import GlobalEnv
 
 
@@ -31,7 +32,7 @@ def wrap_model_with_teacache(wan_t2v: WanT2V_jano, args):
     # TeaCache
     # wan_t2v.__class__.generate = t2v_generate
     wan_t2v.model.__class__.enable_teacache = True
-    wan_t2v.model.__class__.forward = jano_teacache_forward
+    wan_t2v.model.__class__.forward = teacache_forward
     wan_t2v.model.__class__.cnt = 0
     wan_t2v.model.__class__.num_steps = args.sample_steps*2
     wan_t2v.model.__class__.teacache_thresh = args.teacache_thresh
@@ -165,12 +166,12 @@ def teacache_forward(
                 self.accumulated_rel_l1_distance_even += rescale_func(((modulated_inp-self.previous_e0_even).abs().mean() / self.previous_e0_even.abs().mean()).cpu().item())
                 if self.accumulated_rel_l1_distance_even < self.teacache_thresh:
                     should_calc_even = False
-                    print(f"Teacache step {self.cnt // 2}: skip!, error: {self.accumulated_rel_l1_distance_even}/{self.teacache_thresh} ", flush=True)
+                    print(f"Teacache cnt {self.cnt}: skip!, error: {self.accumulated_rel_l1_distance_even}/{self.teacache_thresh} ", flush=True)
 
                 else:
                     should_calc_even = True
                     self.accumulated_rel_l1_distance_even = 0
-                    print(f"Teacache step {self.cnt // 2}: should calc! ", flush=True)
+                    print(f"Teacache cnt {self.cnt}: calc! ", flush=True)
                     
             self.previous_e0_even = modulated_inp.clone()
 
@@ -306,7 +307,7 @@ def jano_teacache_forward(
         context_lens=context_lens)
     
     mask_manager = get_mask_manager()
-    use_jano = GlobalEnv.get_envs("enable_stdit")
+    use_jano = GlobalEnv.get_envs("enable_jano")
     if mask_manager is None:
         GlobalEnv.set_envs("timer_prefix", "full")
     else:

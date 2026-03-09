@@ -70,45 +70,42 @@ huggingface-cli download black-forest-labs/FLUX.1-dev --local-dir ./Flux-1
 
 ## Usage / 运行
 
-All inference scripts are in `run_wan/`, `run_flux/`, and `run_cvx/`.
-You can still run scripts directly, and now there is also a unified launcher:
+Please use the unified launcher `launch.py`.
+First set `MODEL_PATH`, then run with `--model` and `--method`:
 
 ```bash
+# Wan2.1
+export MODEL_PATH=./Wan2.1-T2V-14B
+
 python launch.py --model wan  --method jano
+python launch.py --model wan  --method ori
+python launch.py --model wan  --method pab
+python launch.py --model wan  --method teacache
+python launch.py --model wan  --method toca
+
+# FLUX.1
+export MODEL_PATH=./Flux-1
+
 python launch.py --model flux --method pab
+python launch.py --model flux --method jano
+python launch.py --model flux --method ori
+python launch.py --model flux --method teacache
+python launch.py --model flux --method toca
+
+# CogVideoX
 python launch.py --model cvx  --method jano
 ```
+
+> **参数修改说明 / Parameter configuration:**
+> Please edit generation parameters directly in the corresponding `*_generate.py` files
+> under `run_wan/`, `run_flux/`, and `run_cvx/`.
+>
+> 请在 `run_wan/`、`run_flux/`、`run_cvx/` 下对应的 `*_generate.py` 文件中修改具体参数。
 
 > **Note:** If you get `ModuleNotFoundError`, add the project root to your Python path first:
 > ```bash
 > export PYTHONPATH=$PYTHONPATH:$(pwd)
 > ```
-
-### Wan2.1
-
-```bash
-# Set the model path (defaults to ./Wan2.1-T2V-14B)
-export MODEL_PATH=./Wan2.1-T2V-14B
-
-# Jano
-python run_wan/jano_generate.py
-
-# Baselines
-python run_wan/pab_generate.py
-python run_wan/teacache_generate.py
-python run_wan/toca_generate.py
-```
-
-### FLUX.1
-
-```bash
-export MODEL_PATH=./Flux-1
-
-python run_flux/generate_flux_jano.py
-python run_flux/generate_flux_pab.py
-python run_flux/generate_flux_teacache.py
-python run_flux/generate_flux_toca.py
-```
 
 ## Distributed Inference / 分布式运行
 

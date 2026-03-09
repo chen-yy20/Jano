@@ -24,9 +24,9 @@ def init_jano(
         offload = False,
     ):
     """
-    初始化STDIT参数和全局环境
+    初始化jano参数和全局环境
     Args:
-        enable: bool, 是否启用STDIT
+        enable: bool, 是否启用jano
         model: torch.nn.Module, 待分析的模型
         analyze_block_size: int, 分析attention pattern的block大小
         tag: str, 实验标识
@@ -39,7 +39,7 @@ def init_jano(
     """
     # 设置全局环境变量
     params = {
-        'enable_stdit': enable,
+        'enable_jano': enable,
         'model': model,
         'analyze_block_size': analyze_block_size,
         'tag': tag,
@@ -79,7 +79,7 @@ def init_jano(
     
     # 打印所有参数
     print("\n" + "="*50)
-    print("STDIT Initialization Parameters:")
+    print("jano Initialization Parameters:")
     print("="*50)
     print(f"{'Parameter':<25} Value")
     print("-"*50)

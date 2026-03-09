@@ -6,13 +6,33 @@ from jano.stuff import get_timestep, visualize_mask, print_kv_memory_usage
 from utils.envs import GlobalEnv
 from utils.timer import get_timer
 
+# ── Terminal colour helpers ──────────────────────────────────────────────────
+_RESET  = '\033[0m'
+_BOLD   = '\033[1m'
+_GRAY   = '\033[90m'
+_GREEN  = '\033[32m'
+_YELLOW = '\033[33m'
+_CYAN   = '\033[36m'
+
+# level → color
+_LEVEL_COLOR = {0: _GRAY, 1: _GREEN, 2: _YELLOW, 3: _CYAN}
+
+
+def _tqdm_write(msg: str) -> None:
+    """Print without clobbering a live tqdm progress bar."""
+    try:
+        from tqdm import tqdm as _tqdm
+        _tqdm.write(msg)
+    except Exception:
+        print(msg, flush=True)
+
 class MaskManager:
     def __init__(self, seq_len: int, num_inference_steps: int):
         self.warmup_steps = GlobalEnv.get_envs("warmup_steps")
         self.cooldown_steps = GlobalEnv.get_envs("cooldown_steps")
         self.static_interval = GlobalEnv.get_envs("static_interval")
         self.medium_interval = GlobalEnv.get_envs("medium_interval")
-        self.enable = GlobalEnv.get_envs("enable_stdit")
+        self.enable = GlobalEnv.get_envs("enable_jano")
         
         self.num_inference_steps = num_inference_steps
         self.full_seq_len = seq_len
@@ -47,7 +67,6 @@ class MaskManager:
         if isinstance(combined_score, np.ndarray):
             combined_score = torch.from_numpy(combined_score)
         
-        print(f"{combined_score.shape=}", flush=True)
         static_thresh = GlobalEnv.get_envs("static_thresh")
         medium_thresh = GlobalEnv.get_envs("medium_thresh")
         
@@ -89,15 +108,21 @@ class MaskManager:
         medium_dynamic_ratio = (latent_mask == 2).sum().item() / total_pixels * 100
         high_dynamic_ratio = (latent_mask == 3).sum().item() / total_pixels * 100
         
-        print(f"Created dynamics-based mask with:")
-        print(f"Low dynamic regions (1): {low_dynamic_ratio:.2f}%")
-        print(f"Medium dynamic regions (2): {medium_dynamic_ratio:.2f}%")
-        print(f"High dynamic regions (3): {high_dynamic_ratio:.2f}%")
-        
-        # 可视化
-        visualize_mask(latent_mask)
+        _bar_w = 40
+        _l1_w  = round(low_dynamic_ratio    / 100 * _bar_w)
+        _l2_w  = round(medium_dynamic_ratio / 100 * _bar_w)
+        _l3_w  = _bar_w - _l1_w - _l2_w
+        _bar   = (_GRAY + '█' * _l1_w + _YELLOW + '█' * _l2_w +
+                  _GREEN + '█' * _l3_w + _RESET)
+        _tqdm_write(
+            f"{_BOLD}[Mask]{_RESET} {_bar}  "
+            f"{_GRAY}L1(static):{_RESET}{low_dynamic_ratio:5.1f}%  "
+            f"{_YELLOW}L2(medium):{_RESET}{medium_dynamic_ratio:5.1f}%  "
+            f"{_GREEN}L3(active):{_RESET}{high_dynamic_ratio:5.1f}%"
+        )
+
         self.latent_mask = latent_mask
-        print(f"{self.latent_mask.shape=}")
+        _tqdm_write(f"{_GRAY}[Mask]{_RESET} latent_mask.shape={self.latent_mask.shape}")
         
         return self.latent_mask
     
@@ -130,14 +155,58 @@ class MaskManager:
         
     def update_step_level(self):
         timestep = get_timestep()
-        if timestep is None or timestep <= self.warmup_steps or timestep > self.num_inference_steps - self.cooldown_steps:
-            self.step_level =  0 # full compute wo update
-        elif (timestep-self.warmup_steps-1) % self.static_interval == 0:
-            self.step_level = 3 # full compute w update
-        elif (timestep-self.warmup_steps-1) % self.medium_interval == 0:
-            self.step_level = 2 # medium compute
+        if timestep is None or timestep <= self.warmup_steps \
+                or timestep > self.num_inference_steps - self.cooldown_steps \
+                or self.static_interval * self.medium_interval == 0:
+            self.step_level = 0  # full compute wo update
+        elif (timestep - self.warmup_steps - 1) % self.static_interval == 0:
+            self.step_level = 3  # full compute w update
+        elif (timestep - self.warmup_steps - 1) % self.medium_interval == 0:
+            self.step_level = 2  # medium compute
         else:
-            self.step_level = 1 # active compute
+            self.step_level = 1  # active compute
+
+        self._update_memory_stats()
+
+    def _update_memory_stats(self):
+        """每步更新彩色 level 块状条 + postfix；仅在 cooldown 前打印一次完整内存报告。"""
+        timestep = get_timestep() or 0
+        level    = self.step_level
+        lc       = _LEVEL_COLOR[level]
+
+        alloc     = torch.cuda.memory_allocated()     / 1024**3
+        seq_ratio = (
+            self.get_seq_len() / self.full_seq_len * 100
+            if self.full_seq_len else 100.0
+        )
+
+        # ── 追加一格彩色方块到 level_bar ─────────────────────────────
+        try:
+            blocks = GlobalEnv.get_envs("step_blocks") + f"{lc}\u2588{_RESET}"
+            GlobalEnv.set_envs("step_blocks", blocks)
+            GlobalEnv.get_envs("level_bar").set_description_str(blocks, refresh=True)
+        except (KeyError, AttributeError):
+            pass
+
+        # ── 更新主进度条 postfix ──────────────────────────────────────
+        try:
+            GlobalEnv.get_envs("pbar").set_postfix_str(
+                f"L{level}  seq={seq_ratio:.0f}%  GPU={alloc:.1f}GB",
+                refresh=False,
+            )
+        except (KeyError, AttributeError):
+            pass
+
+        # ── 仅在 cooldown 前（最后一个 active 步）打印一次完整内存报告 ──
+        cooldown_boundary = self.num_inference_steps - self.cooldown_steps
+        if timestep != cooldown_boundary:
+            return
+
+        peak = torch.cuda.max_memory_allocated() / 1024**3
+        _tqdm_write(
+            f"\n{_BOLD}[Memory @ cooldown boundary]{_RESET}  "
+            f"GPU alloc {alloc:.2f}GB  peak {peak:.2f}GB"
+        )
         
     def get_masked_rotary(self, rotary: tuple, txt_seq_len: int = 0) -> tuple:
         """
@@ -282,9 +351,9 @@ class MaskManager:
             self.medium_cache[state_key] = medium_seq
             result = x
             
-            step = get_timestep()
-            if step - self.warmup_steps-1 == 0:
-                print_kv_memory_usage(state_key, static_seq, medium_seq)
+            # step = get_timestep()
+            # if step - self.warmup_steps-1 == 0:
+            #     print_kv_memory_usage(state_key, static_seq, medium_seq)
 
                 
         elif self.step_level == 2:
@@ -297,10 +366,12 @@ class MaskManager:
         elif self.step_level == 1:
             medium_seq = self.medium_cache[state_key]
             static_seq = self.static_cache[state_key]
-            # print(f"{get_timestep()} | {medium_seq.shape=} {static_seq.shape=}", flush=True)
-            result = torch.cat([x, medium_seq , static_seq], dim=2)
-            if layer_idx == 20:
-                print(f"{get_timestep()} | Fetch from {state_key}, {static_seq.shape=} {medium_seq.shape=}", flush=True)
+            result = torch.cat([x, medium_seq, static_seq], dim=2)
+            # if layer_idx == 20:
+            #     _tqdm_write(
+            #         f"{_GRAY}[KV]{_RESET} step={get_timestep()} layer={state_key}  "
+            #         f"static={static_seq.shape}  medium={medium_seq.shape}"
+            #     )
 
                 
         return result.chunk(2, dim=0)
@@ -323,7 +394,7 @@ def init_mask_manager(seq_len, num_inference_steps) -> MaskManager:
     
 def get_mask_manager() -> MaskManager:
     """获取MaskManager实例"""
-    if GlobalEnv.get_envs("enable_stdit"):
+    if GlobalEnv.get_envs("enable_jano"):
         return GlobalEnv.get_envs('MM')
     else:
         return None

@@ -17,6 +17,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
 import torch
+from tqdm import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer, T5EncoderModel, T5TokenizerFast
 
 from diffusers.image_processor import VaeImageProcessor
@@ -506,7 +507,6 @@ class FluxPipeline(
         width = 2 * (int(width) // self.vae_scale_factor)
 
         shape = (batch_size, num_channels_latents, height, width)
-        print(f"{shape=}")
 
         if latents is not None:
             latent_image_ids = self._prepare_latent_image_ids(batch_size, height, width, device, dtype)
@@ -522,6 +522,7 @@ class FluxPipeline(
         latents = self._pack_latents(latents, batch_size, num_channels_latents, height, width)
         latent_image_ids = self._prepare_latent_image_ids(batch_size, height, width, device, dtype)
         return latents, latent_image_ids
+
 
     @property
     def guidance_scale(self):
@@ -720,18 +721,17 @@ class FluxPipeline(
         else:
             guidance = None
             
-        # # analyzer 和 mask manager 初始化
+        # analyzer 和 mask manager 初始化
         use_jano = False
-        if GlobalEnv.get_envs("enable_stdit"):
+        if GlobalEnv.get_envs("enable_jano"):
             use_jano = True
-            print(f"Using Jano: {height=} {width=} {num_channels_latents}")
             analyzer = DynamicAnalyzer(
                 C = num_channels_latents,
                 T = 1,
                 H = 2 * height//self.vae_scale_factor,
                 W = 2 * width//self.vae_scale_factor,
             )
-            analyzer.step(latent=self._unpack_latents(latents,height, width, self.vae_scale_factor).unsqueeze(2).squeeze(0))
+            analyzer.step(latent=self._unpack_latents(latents, height, width, self.vae_scale_factor).unsqueeze(2).squeeze(0))
             mask_manager = init_mask_manager(
                 seq_len=latents.shape[1],
                 num_inference_steps=num_inference_steps,
@@ -739,72 +739,87 @@ class FluxPipeline(
 
         # 6. Denoising loop
         with get_timer("generate_e2e"):
-            with self.progress_bar(total=num_inference_steps) as progress_bar:
-                for i, t in enumerate(timesteps):
-                    if self.interrupt:
-                        continue
-                    
-                    update_timestep(i)
-                    if use_jano:
-                        mask_manager.update_step_level()
-                    
-                    # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-                    timestep = t.expand(latents.shape[0]).to(latents.dtype)
+            pbar = tqdm(
+                timesteps,
+                desc="Denoising",
+                dynamic_ncols=True,
+                position=0,
+                leave=True,
+            )
+            # 彩色 level 块状条（下方独立一行）
+            level_bar = tqdm(
+                total=0,
+                bar_format="  {desc}",
+                position=1,
+                leave=True,
+                ncols=9999,
+            )
+            GlobalEnv.set_envs("pbar", pbar)
+            GlobalEnv.set_envs("level_bar", level_bar)
+            GlobalEnv.set_envs("step_blocks", "")
+            for i, t in enumerate(pbar):
+                if self.interrupt:
+                    continue
 
-                    noise_pred = self.transformer(
-                        hidden_states=latents,
-                        timestep=timestep / 1000,
-                        guidance=guidance,
-                        pooled_projections=pooled_prompt_embeds,
-                        encoder_hidden_states=prompt_embeds,
-                        txt_ids=text_ids,
-                        img_ids=latent_image_ids,
-                        joint_attention_kwargs=self.joint_attention_kwargs,
-                        return_dict=False,
-                    )[0] # 1, 4096, 64
-                    
-                    if use_jano:
-                        # unpack: 1, 4096, 16 -> 1, 16, 128, 128
-                        unpacked_noise_pred = self._unpack_latents(noise_pred, height, width, self.vae_scale_factor)
-                        # print(f"{unpacked_noise_pred.shape=}, {noise_pred.shape=}")
-                        analyze_result = analyzer.step(unpacked_noise_pred.unsqueeze(2).squeeze(0))
-                        
-                        if analyze_result is not None: # 设置好mask
-                            latent_mask = mask_manager.generate_mask(analyze_result) # shape 16, 1, 128, 128
-                            # # transform to sequence mask
-                            mask = latent_mask.unsqueeze(0).squeeze(2)
-                            compact_height = 2 * (int(height) // self.vae_scale_factor)
-                            compact_width = 2 * (int(width) // self.vae_scale_factor)
-                            packed_mask = self._pack_latents(mask, batch_size, num_channels_latents, compact_height, compact_width)
-                            # 检查每一行是否完全相同
-                            is_same = (packed_mask[0, :, :] == packed_mask[0, :, :1]).all(dim=-1)
-                            assert is_same.all(), "Something is wrong with mask, plz contact developer."
-                            sequence_mask = packed_mask[0,:,0]
-                            print(f"{sequence_mask.shape=}, {sequence_mask=}", flush=True)
-                            mask_manager.set_sequence_mask(sequence_mask)
-                            # exit()
+                update_timestep(i)
+                if use_jano:
+                    mask_manager.update_step_level()
 
-                    # compute the previous noisy sample x_t -> x_t-1
-                    latents_dtype = latents.dtype
-                    latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+                # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
+                timestep = t.expand(latents.shape[0]).to(latents.dtype)
 
-                    if latents.dtype != latents_dtype:
-                        if torch.backends.mps.is_available():
-                            # some platforms (eg. apple mps) misbehave due to a pytorch bug: https://github.com/pytorch/pytorch/pull/99272
-                            latents = latents.to(latents_dtype)
+                noise_pred = self.transformer(
+                    hidden_states=latents,
+                    timestep=timestep / 1000,
+                    guidance=guidance,
+                    pooled_projections=pooled_prompt_embeds,
+                    encoder_hidden_states=prompt_embeds,
+                    txt_ids=text_ids,
+                    img_ids=latent_image_ids,
+                    joint_attention_kwargs=self.joint_attention_kwargs,
+                    return_dict=False,
+                )[0]  # 1, 4096, 64
 
-                    if callback_on_step_end is not None:
-                        callback_kwargs = {}
-                        for k in callback_on_step_end_tensor_inputs:
-                            callback_kwargs[k] = locals()[k]
-                        callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
+                if use_jano:
+                    # unpack: 1, 4096, 16 -> 1, 16, 128, 128
+                    unpacked_noise_pred = self._unpack_latents(noise_pred, height, width, self.vae_scale_factor)
+                    analyze_result = analyzer.step(unpacked_noise_pred.unsqueeze(2).squeeze(0))
 
-                        latents = callback_outputs.pop("latents", latents)
-                        prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
+                    if analyze_result is not None:  # 设置好 mask
+                        latent_mask = mask_manager.generate_mask(analyze_result)  # shape 16, 1, 128, 128
+                        # transform to sequence mask
+                        mask = latent_mask.unsqueeze(0).squeeze(2)
+                        compact_height = 2 * (int(height) // self.vae_scale_factor)
+                        compact_width = 2 * (int(width) // self.vae_scale_factor)
+                        packed_mask = self._pack_latents(mask, batch_size, num_channels_latents, compact_height, compact_width)
+                        # 检查每一行是否完全相同
+                        is_same = (packed_mask[0, :, :] == packed_mask[0, :, :1]).all(dim=-1)
+                        assert is_same.all(), "Something is wrong with mask, plz contact developer."
+                        sequence_mask = packed_mask[0, :, 0]
+                        mask_manager.set_sequence_mask(sequence_mask)
 
-                    # call the callback, if provided
-                    if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
-                        progress_bar.update()
+                # compute the previous noisy sample x_t -> x_t-1
+                latents_dtype = latents.dtype
+                latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+
+                if latents.dtype != latents_dtype:
+                    if torch.backends.mps.is_available():
+                        # some platforms (eg. apple mps) misbehave due to a pytorch bug: https://github.com/pytorch/pytorch/pull/99272
+                        latents = latents.to(latents_dtype)
+
+                if callback_on_step_end is not None:
+                    callback_kwargs = {}
+                    for k in callback_on_step_end_tensor_inputs:
+                        callback_kwargs[k] = locals()[k]
+                    callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
+
+                    latents = callback_outputs.pop("latents", latents)
+                    prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
+
+                pbar.update(0)  # 刷新 postfix 显示
+
+            pbar.close()
+            level_bar.close()
 
 
         if output_type == "latent":
@@ -818,7 +833,7 @@ class FluxPipeline(
 
         # Offload all models
         self.maybe_free_model_hooks()
-        if GlobalEnv.get_envs("enable_stdit"):
+        if GlobalEnv.get_envs("enable_jano"):
             mask_manager.clear_frozen_states()
 
         if not return_dict:

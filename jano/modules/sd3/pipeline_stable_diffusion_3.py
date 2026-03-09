@@ -1052,7 +1052,7 @@ class StableDiffusion3Pipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromSingle
                 
         # # analyzer 和 mask manager 初始化
         use_jano = False
-        if GlobalEnv.get_envs("enable_stdit"):
+        if GlobalEnv.get_envs("enable_jano"):
             use_jano = True
             print(f"Using Jano: {height=} {width=} {num_channels_latents}")
             analyzer = DynamicAnalyzer(

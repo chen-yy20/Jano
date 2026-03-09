@@ -424,7 +424,7 @@ def jano_teacache_forward(
         image_rotary_emb = self.pos_embed(ids)
         
         mask_manager = get_mask_manager()
-        use_jano = GlobalEnv.get_envs("enable_stdit")
+        use_jano = GlobalEnv.get_envs("enable_jano")
         if mask_manager is None:
             GlobalEnv.set_envs("timer_prefix", "full")
         else:

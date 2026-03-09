@@ -21,16 +21,17 @@ from wan.configs import MAX_AREA_CONFIGS, SIZE_CONFIGS, SUPPORTED_SIZES, WAN_CON
 from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
 from wan.utils.utils import cache_image, cache_video, str2bool
 
-# stdit modifieds
+# jano modifieds
 from jano.modules.wan.wan_t2v import WanT2V_jano
-# from stdit.distributed.parallel_state import init_distributed_environment, init_cp_group
+# from jano.distributed.parallel_state import init_distributed_environment, init_cp_group
 from jano import init_jano
 from jano.dist.parallel_state import init_distributed_environment, init_cp_group
 from jano.stuff import get_prompt_id
 
 from utils.envs import GlobalEnv
-from utils.timer import print_time_statistics, save_time_statistics_to_file
+from utils.timer import print_time_statistics, save_time_statistics_to_file, get_time_statistics_dict
 from utils.quality_metric import evaluate_quality_with_origin
+from utils.results import save_params_and_metrics
 
 # 主体
 # PROMPT = "Two cats standing still on a spotlighted stage."
@@ -59,12 +60,14 @@ ANALYZE_BLOCK_SIZE = (7,6,8)
 STATIC_THRESH = 0.2
 MEDIUM_THRESH = 0.6
 WARMUP = 6
-ENABLE_JANO = 1
-OFFLOAD_KV = 1
+DEFAULT_ENABLE_JANO = 0
+ENABLE_JANO = int(os.getenv("ENABLE_JANO", str(DEFAULT_ENABLE_JANO)))
+OFFLOAD_KV = 0
 
 TAG = f"jano_offload{OFFLOAD_KV}" if ENABLE_JANO else "ori"
 model_id = "1.3B" if "1.3B" in MODEL_PATH else "14B"
-OUTPUT_DIR = f"./wan_results/appendix_result/{model_id}/{get_prompt_id(PROMPT)}"
+METHOD_DIR = "jano" if ENABLE_JANO else "ori"
+OUTPUT_DIR = f"./results/wan/{model_id}/{METHOD_DIR}/{get_prompt_id(PROMPT)}"
     
     
 # 2卡并行的设置，按照你的方法修改环境变量
@@ -448,13 +451,8 @@ def generate(args):
         offload=OFFLOAD_KV,
     )
 
-    # 保存运行参数
-    config_path = None
-    if rank == 0:
-        config_path = save_run_config(args, OUTPUT_DIR)
-        logging.info(f"Run config saved to: {config_path}")
-
     # 记录生成开始时间
+    config_path = None
     gen_start_time = time.perf_counter()
 
     if args.offload_model is None:
@@ -772,7 +770,44 @@ def generate(args):
             
         quality_result = None
         if TAG != "ori":
-            quality_result = evaluate_quality_with_origin(args.save_file, TAG)
+            baseline_path = os.path.abspath(args.save_file).replace("/jano/", "/ori/").replace(f"{TAG}_", "ori_")
+            quality_result = evaluate_quality_with_origin(
+                args.save_file,
+                TAG,
+                save_metrics=False,
+                baseline_path=baseline_path,
+            )
+
+        # 保存参数与指标（统一 JSON）
+        quality_metrics = quality_result.get("metrics") if quality_result else None
+        params = {
+            "model": "wan",
+            "method": "jano",
+            "model_id": model_id,
+            "model_path": MODEL_PATH,
+            "prompt": PROMPT,
+            "task": args.task,
+            "size": args.size,
+            "frame_num": args.frame_num,
+            "sample_steps": args.sample_steps,
+            "sample_shift": args.sample_shift,
+            "sample_solver": args.sample_solver,
+            "sample_guide_scale": args.sample_guide_scale,
+            "base_seed": args.base_seed,
+            "enable_jano": bool(ENABLE_JANO),
+            "offload_kv": bool(OFFLOAD_KV),
+            "t_weight": T_WEIGHT,
+            "diffusion_strength": DIFFUSION_STENGTH,
+            "diffusion_distance": DIFFUSION_DISTANCE,
+            "analyze_block_size": list(ANALYZE_BLOCK_SIZE),
+            "static_thresh": STATIC_THRESH,
+            "medium_thresh": MEDIUM_THRESH,
+            "warmup": WARMUP,
+        }
+        params_path = save_params_and_metrics(
+            OUTPUT_DIR, TAG, params, get_time_statistics_dict(), quality_metrics
+        )
+        logging.info(f"Params & metrics saved to: {params_path}")
 
     # ── 最终摘要 ──────────────────────────────────────────────────
     gen_elapsed = time.perf_counter() - gen_start_time
@@ -783,10 +818,7 @@ def generate(args):
         logging.info(sep)
         logging.info(f"  Total wall time : {gen_elapsed:.1f} s  ({gen_elapsed/60:.2f} min)")
         logging.info(f"  Output video    : {args.save_file}")
-        if config_path:
-            logging.info(f"  Run config      : {config_path}")
-        time_stats_path = f"{OUTPUT_DIR}/{TAG}_time_stats.txt"
-        logging.info(f"  Timing stats    : {time_stats_path}")
+        logging.info(f"  Params & metrics: {OUTPUT_DIR}/{TAG}_params_metrics.json")
         if quality_result is not None:
             metrics = quality_result.get("metrics", {})
             logging.info("  Quality metrics vs. baseline:")
@@ -805,5 +837,4 @@ if __name__ == "__main__":
     args = _parse_args()
     generate(args)
     print_time_statistics()
-    save_time_statistics_to_file(f"{OUTPUT_DIR}/{TAG}_time_stats.txt")
     

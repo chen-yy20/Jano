@@ -192,6 +192,20 @@ class TimerManager:
         print(("=" * 94 if detect_outliers else "=" * 66) + "\n")
         
     @classmethod
+    def get_stats_dict(cls):
+        """Return timing statistics as a dictionary"""
+        result = {}
+        for name, timer in cls._timers.items():
+            if timer.times:
+                result[name] = {
+                    "min_ms": round(min(timer.times), 4),
+                    "max_ms": round(max(timer.times), 4),
+                    "avg_ms": round(sum(timer.times) / len(timer.times), 4),
+                    "samples": len(timer.times),
+                }
+        return result
+
+    @classmethod
     def save_time_statistics_to_file(cls, filepath="timing_stats.txt"):
         """Save timing statistics (min/max/avg) to a text file and tracker"""
         if not cls._global_enabled:
@@ -300,3 +314,7 @@ def disable_timing():
 def is_timing_enabled() -> bool:
     """Check global timing enable status"""
     return TimerManager.is_timing_enabled()
+
+def get_time_statistics_dict() -> dict:
+    """Return timing statistics as a dictionary"""
+    return TimerManager.get_stats_dict()

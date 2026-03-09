@@ -1,5 +1,4 @@
 wan_bckup
-*.mp4
 *.png
 *.log
 *.pt
@@ -23,10 +22,7 @@ Thumbs.db
 # Result and experiment output files
 *_time_stats.txt
 *_quality_metrics.json
-wan_results/
-run_cvx/cvx_results/
-run_wan/wan_results/
-run_flux/flux_results/
+results/
 
 # Model checkpoints and data
 *.safetensors

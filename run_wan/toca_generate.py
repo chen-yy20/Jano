@@ -21,10 +21,12 @@ from wan.utils.prompt_extend import DashScopePromptExpander, QwenPromptExpander
 from wan.utils.utils import cache_image, cache_video, str2bool
 
 from wan.jano_baselines.text2video_tocache import WanT2V_toca
+from jano.dist.parallel_state import init_distributed_environment, init_cp_group
 
-from utils.timer import init_timer, get_timer, print_time_statistics, save_time_statistics_to_file
+from utils.timer import init_timer, get_timer, print_time_statistics, save_time_statistics_to_file, get_time_statistics_dict
 from jano.stuff import get_prompt_id
 from utils.quality_metric import evaluate_quality_with_origin
+from utils.results import save_params_and_metrics
 
 from datetime import datetime
 time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -37,7 +39,25 @@ ENABLE_TOCA = 1
 
 TAG = "toca" if ENABLE_TOCA else "ori"
 model_id = "1.3B" if "1.3B" in MODEL_PATH else "14B"
-OUTPUT_DIR = f"./wan_results/tokencache_wan_result/{model_id}/{get_prompt_id(PROMPT)}"
+OUTPUT_DIR = f"./results/wan/{model_id}/toca/{get_prompt_id(PROMPT)}"
+
+# 2卡并行初始化（CFG parallel）
+rank = int(os.getenv("RANK", 0))
+world_size = int(os.getenv("WORLD_SIZE", 1))
+local_rank = int(os.getenv("LOCAL_RANK", 0))
+if world_size > 1:
+    assert world_size == 2, "only support cfg parallel"
+    torch.cuda.set_device(local_rank)
+    init_distributed_environment(
+        world_size=world_size,
+        rank=rank,
+        local_rank=local_rank,
+    )
+    init_cp_group(
+        group_ranks=[[0, 1]],
+        local_rank=local_rank,
+        backend="nccl",
+    )
 
 EXAMPLE_PROMPT = {
     "t2v-1.3B": {
@@ -319,36 +339,16 @@ def generate(args):
         args.offload_model = False if world_size > 1 else True
         logging.info(
             f"offload_model is not specified, set to {args.offload_model}.")
-        
-    # if world_size > 1:
-    #     torch.cuda.set_device(local_rank)
-    #     dist.init_process_group(
-    #         backend="nccl",
-    #         init_method="env://",
-    #         rank=rank,
-    #         world_size=world_size)
-    # else:
-    #     assert not (
-    #         args.t5_fsdp or args.dit_fsdp
-    #     ), f"t5_fsdp and dit_fsdp are not supported in non-distributed environments."
-    #     assert not (
-    #         args.ulysses_size > 1 or args.ring_size > 1
-    #     ), f"context parallel are not supported in non-distributed environments."
 
-    # if args.ulysses_size > 1 or args.ring_size > 1:
-    #     assert args.ulysses_size * args.ring_size == world_size, f"The number of ulysses_size and ring_size should be equal to the world size."
-    #     from xfuser.core.distributed import (
-    #         init_distributed_environment,
-    #         initialize_model_parallel,
-    #     )
-    #     init_distributed_environment(
-    #         rank=dist.get_rank(), world_size=dist.get_world_size())
-
-    #     initialize_model_parallel(
-    #         sequence_parallel_degree=dist.get_world_size(),
-    #         ring_degree=args.ring_size,
-    #         ulysses_degree=args.ulysses_size,
-    #     )
+    if world_size == 1:
+        assert not (
+            args.t5_fsdp or args.dit_fsdp
+        ), f"t5_fsdp and dit_fsdp are not supported in non-distributed environments."
+        assert not (
+            args.ulysses_size > 1 or args.ring_size > 1
+        ), f"context parallel are not supported in non-distributed environments."
+    elif args.ulysses_size > 1 or args.ring_size > 1:
+        raise NotImplementedError("ulysses/ring parallel is not supported with cfg group init mode")
 
     if args.use_prompt_extend:
         if args.prompt_extend_method == "dashscope":
@@ -629,7 +629,7 @@ def generate(args):
         #     filename = f"{args.task}_{args.size.replace('*','x') if sys.platform=='win32' else args.size}_{args.ulysses_size}_{args.ring_size}_{formatted_prompt}_{formatted_time}" + suffix
         # os.makedirs(args.output_dir, exist_ok=True)
         suffix = '.png' if "t2i" in args.task else '.mp4'
-        filename = f"{args.task}_{TAG}_{get_prompt_id(PROMPT)}" + suffix
+        filename = f"{TAG}_{get_prompt_id(PROMPT)}_{args.task}" + suffix
         os.makedirs(args.output_dir, exist_ok=True)
         args.save_file = os.path.join(args.output_dir, filename)
         
@@ -657,6 +657,29 @@ if __name__ == "__main__":
     args = _parse_args()
     generate(args)
     print_time_statistics()
-    save_time_statistics_to_file(f"{OUTPUT_DIR}/{TAG}_time_stats.txt")
-    if ENABLE_TOCA:
-        evaluate_quality_with_origin(args.save_file, TAG)
+    rank = int(os.getenv("RANK", 0))
+    if rank == 0:
+        # 保存参数与指标（统一 JSON）
+        params = {
+            "model": "wan",
+            "method": "toca",
+            "model_id": model_id,
+            "model_path": MODEL_PATH,
+            "prompt": PROMPT,
+            "task": args.task,
+            "size": args.size,
+            "base_seed": args.base_seed,
+            "enable_toca": bool(ENABLE_TOCA),
+        }
+        quality_result = None
+        if ENABLE_TOCA and args.save_file is not None:
+            baseline_path = os.path.abspath(args.save_file).replace("/toca/", "/ori/").replace(f"{TAG}_", "ori_")
+            quality_result = evaluate_quality_with_origin(
+                args.save_file,
+                TAG,
+                save_metrics=False,
+                baseline_path=baseline_path,
+            )
+        quality_metrics = quality_result.get("metrics") if quality_result else None
+        params_path = save_params_and_metrics(OUTPUT_DIR, TAG, params, get_time_statistics_dict(), quality_metrics)
+        print(f"Params & metrics saved to {params_path}", flush=True)

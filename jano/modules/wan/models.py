@@ -269,7 +269,7 @@ class WanAttentionBlock(nn.Module):
         # layers
         self.norm1 = WanLayerNorm(dim, eps)
         self.self_attn = WanSelfAttention_jano(dim, num_heads, window_size, qk_norm, eps, layer_idx)
-        # if GlobalEnv.get_envs("enable_stdit"):
+        # if GlobalEnv.get_envs("enable_jano"):
         #     self.self_attn = WanSelfAttention_jano(dim, num_heads, window_size, qk_norm, eps, layer_idx)
         # else:
         #     self.self_attn = WanSelfAttention(dim, num_heads, window_size, qk_norm, eps, layer_idx)

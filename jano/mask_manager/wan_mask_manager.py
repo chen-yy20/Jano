@@ -150,7 +150,7 @@ class MaskManager:
         self.static_interval = GlobalEnv.get_envs("static_interval")
         self.medium_interval = GlobalEnv.get_envs("medium_interval")
         
-        self.enable = GlobalEnv.get_envs("enable_stdit")
+        self.enable = GlobalEnv.get_envs("enable_jano")
         
         self.num_inference_steps = num_inference_steps
         self.num_layers = layer_nums
@@ -631,7 +631,7 @@ def init_mask_manager(patch_size, seq_len, num_inference_steps, layer_num,
     return mask_manager
     
 def get_mask_manager() -> MaskManager:
-    if GlobalEnv.get_envs("enable_stdit"):
+    if GlobalEnv.get_envs("enable_jano"):
         return GlobalEnv.get_envs('MM')
     else:
         return None

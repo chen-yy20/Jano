@@ -98,7 +98,7 @@ class CogVideoXBlock(nn.Module):
         # 1. Self Attention
         self.norm1 = CogVideoXLayerNormZero(time_embed_dim, dim, norm_elementwise_affine, norm_eps, bias=True)
 
-        attn_processor = CogVideoXAttnProcessor_jano(layer_id=layer_id) if GlobalEnv.get_envs("enable_stdit") else CogVideoXAttnProcessor2_0()
+        attn_processor = CogVideoXAttnProcessor_jano(layer_id=layer_id) if GlobalEnv.get_envs("enable_jano") else CogVideoXAttnProcessor2_0()
         self.attn1 = Attention(
             query_dim=dim,
             dim_head=attention_head_dim,

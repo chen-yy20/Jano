@@ -690,7 +690,7 @@ class CogVideoXPipeline(DiffusionPipeline, CogVideoXLoraLoaderMixin):
         )
         # print(f"{latents.shape=}", flush=True)
         
-        enable_jano = GlobalEnv.get_envs("enable_stdit")
+        enable_jano = GlobalEnv.get_envs("enable_jano")
         warmup_steps = GlobalEnv.get_envs("warmup_steps")
         
         if enable_jano:

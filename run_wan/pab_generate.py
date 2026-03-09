@@ -26,8 +26,9 @@ from wan.jano_baselines.pab_manager import init_pab_manger
 from jano.stuff import get_prompt_id
 from jano.dist.parallel_state import init_distributed_environment, init_cp_group
 
-from utils.timer import init_timer, get_timer, print_time_statistics, save_time_statistics_to_file
+from utils.timer import init_timer, get_timer, print_time_statistics, save_time_statistics_to_file, get_time_statistics_dict
 from utils.quality_metric import evaluate_quality_with_origin
+from utils.results import save_params_and_metrics
 from utils.envs import GlobalEnv
 
 from datetime import datetime
@@ -37,14 +38,14 @@ init_timer()
 PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
 MODEL_PATH = os.getenv("MODEL_PATH", "./Wan2.1-T2V-1.3B")  # 1.3B / 14B
 ENABLE_PAB = 1
-WARMUP = 7
-SELF_RANGE = 2
-CROSS_RANGE = 5
+WARMUP = 5
+SELF_RANGE = 5
+CROSS_RANGE = 8
 LAYER_INTERVAL = 4 # 设置为n，内存消耗就减少为n分之一
 
 TAG = f"s{SELF_RANGE}c{CROSS_RANGE}_i{LAYER_INTERVAL}" if ENABLE_PAB else "ori"
 model_id = "1.3B" if "1.3B" in MODEL_PATH else "14B"
-OUTPUT_DIR = f"./wan_results/pab_wan_result/{model_id}/{get_prompt_id(PROMPT)}"
+OUTPUT_DIR = f"./results/wan/{model_id}/pab/{get_prompt_id(PROMPT)}"
 
 init_pab_manger(50, SELF_RANGE, CROSS_RANGE, WARMUP, LAYER_INTERVAL)
 
@@ -681,8 +682,36 @@ def generate(args):
                 nrow=1,
                 normalize=True,
                 value_range=(-1, 1))
+        quality_result = None
         if TAG != "ori":
-            evaluate_quality_with_origin(args.save_file, TAG)
+            baseline_path = os.path.abspath(args.save_file).replace("/pab/", "/ori/").replace(f"{TAG}_", "ori_")
+            quality_result = evaluate_quality_with_origin(
+                args.save_file,
+                TAG,
+                save_metrics=False,
+                baseline_path=baseline_path,
+            )
+        # 保存参数与指标（统一 JSON）
+        quality_metrics = quality_result.get("metrics") if quality_result else None
+        params = {
+            "model": "wan",
+            "method": "pab",
+            "model_id": model_id,
+            "model_path": MODEL_PATH,
+            "prompt": PROMPT,
+            "task": args.task,
+            "size": args.size,
+            "base_seed": args.base_seed,
+            "enable_pab": bool(ENABLE_PAB),
+            "warmup": WARMUP,
+            "self_range": SELF_RANGE,
+            "cross_range": CROSS_RANGE,
+            "layer_interval": LAYER_INTERVAL,
+        }
+        params_path = save_params_and_metrics(
+            OUTPUT_DIR, TAG, params, get_time_statistics_dict(), quality_metrics
+        )
+        logging.info(f"Params & metrics saved to: {params_path}")
     logging.info("Finished.")
 
 
@@ -690,5 +719,4 @@ if __name__ == "__main__":
     args = _parse_args()
     generate(args)
     print_time_statistics()
-    save_time_statistics_to_file(f"{OUTPUT_DIR}/{TAG}_time_stats.txt")
     

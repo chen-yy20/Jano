@@ -9,17 +9,19 @@ import sys
 SCRIPT_MAP = {
     "wan": {
         "jano": "run_wan/jano_generate.py",
+        "ori": "run_wan/jano_generate.py",
         "pab": "run_wan/pab_generate.py",
         "teacache": "run_wan/teacache_generate.py",
         "toca": "run_wan/toca_generate.py",
     },
     "flux": {
-        "jano": "run_flux/generate_flux_jano.py",
-        "pab": "run_flux/generate_flux_pab.py",
-        "teacache": "run_flux/generate_flux_teacache.py",
-        "toca": "run_flux/generate_flux_toca.py",
+        "jano": "run_flux/jano_generate.py",
+        "ori": "run_flux/jano_generate.py",
+        "pab": "run_flux/pab_generate.py",
+        "teacache": "run_flux/teacache_generate.py",
+        "toca": "run_flux/toca_generate.py",
     },
-    "cvx": {"jano": "run_cvx/jano_generate.py"},
+    "cvx": {"jano": "run_cvx/jano_generate.py", "ori": "run_cvx/jano_generate.py"},
     "ras": {"jano": "ras_exp/jano_sd3.py", "ras": "ras_exp/ras_sd3.py"},
 }
 
@@ -58,6 +60,12 @@ def main():
     script = resolve_script(args.model, args.method, args.script)
     repo_root = os.path.dirname(os.path.abspath(__file__))
     env = os.environ.copy()
+
+    if args.method == "ori":
+        env["ENABLE_JANO"] = "0"
+    elif args.method == "jano":
+        env["ENABLE_JANO"] = "1"
+
     if env.get("PYTHONPATH") and env["PYTHONPATH"].strip():
         env["PYTHONPATH"] = os.pathsep.join([repo_root, env["PYTHONPATH"]])
     else:

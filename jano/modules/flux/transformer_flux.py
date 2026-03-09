@@ -67,7 +67,7 @@ class FluxSingleTransformerBlock(nn.Module):
         self.act_mlp = nn.GELU(approximate="tanh")
         self.proj_out = nn.Linear(dim + self.mlp_hidden_dim, dim)
         
-        if GlobalEnv.get_envs("enable_stdit"):
+        if GlobalEnv.get_envs("enable_jano"):
             processor = FluxAttnProcessor_jano(layer_idx)
         else:
             processor = FluxAttnProcessor2_0()
@@ -136,7 +136,7 @@ class FluxTransformerBlock(nn.Module):
         self.norm1_context = AdaLayerNormZero(dim)
 
         if hasattr(F, "scaled_dot_product_attention"):
-            if GlobalEnv.get_envs("enable_stdit"):
+            if GlobalEnv.get_envs("enable_jano"):
                 processor = FluxAttnProcessor_jano(layer_idx)
             else:
                 processor = FluxAttnProcessor2_0()

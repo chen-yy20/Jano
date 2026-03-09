@@ -26,6 +26,7 @@ from wan.utils.fm_solvers import (
 from wan.utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
 # from .train_free_utils import make_ar1_noise, temporal_align_step
 from .tocache.apply_toca import apply_toca_to_wan
+from jano.dist.parallel_state import get_cp_group, get_cp_worldsize
 
 from utils.timer import get_timer
 
@@ -272,15 +273,30 @@ class WanT2V_toca:
                     timestep = torch.stack(timestep)
 
                     self.model.to(self.device)
-                    if hasattr(self.model, 'toca_current'):
-                        self.model.toca_current['flag'] = 0
-                    noise_pred_cond = self.model(
-                        latent_model_input, t=timestep, **arg_c)[0]
-                    if hasattr(self.model, 'toca_current'):
-                        self.model.toca_current['flag'] = 1
-                        
-                    noise_pred_uncond = self.model(
-                        latent_model_input, t=timestep, **arg_null)[0]
+                    if get_cp_worldsize() == 2:
+                        if get_cp_group().rank_in_group == 0:
+                            if hasattr(self.model, 'toca_current'):
+                                self.model.toca_current['flag'] = 0
+                            noise_pred_cp = self.model(
+                                latent_model_input, t=timestep, **arg_c)[0]
+                        else:
+                            if hasattr(self.model, 'toca_current'):
+                                self.model.toca_current['flag'] = 1
+                            noise_pred_cp = self.model(
+                                latent_model_input, t=timestep, **arg_null)[0]
+
+                        noise_pred_gather = get_cp_group().all_gather(noise_pred_cp, dim=0, split=True)
+                        noise_pred_cond = noise_pred_gather[0]
+                        noise_pred_uncond = noise_pred_gather[1]
+                    else:
+                        if hasattr(self.model, 'toca_current'):
+                            self.model.toca_current['flag'] = 0
+                        noise_pred_cond = self.model(latent_model_input, t=timestep, **arg_c)[0]
+                        if hasattr(self.model, 'toca_current'):
+                            self.model.toca_current['flag'] = 1
+
+                        noise_pred_uncond = self.model(
+                            latent_model_input, t=timestep, **arg_null)[0]
 
                     noise_pred = noise_pred_uncond + guide_scale * (
                         noise_pred_cond - noise_pred_uncond)

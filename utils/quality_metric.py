@@ -411,19 +411,33 @@ def evaluate_image_quality(generated_path: str, reference_path: str,
     return result
 
 
-def evaluate_quality_with_origin(image_path: str, tag: str):
-    """评测生成图像质量"""
+def evaluate_quality_with_origin(
+    image_path: str,
+    tag: str,
+    save_metrics: bool = True,
+    baseline_path: str = None,
+):
+    """评测生成图像质量
+    
+    Args:
+        image_path: 生成文件路径
+        tag: 当前方法的标签（用于构造 baseline 路径和输出文件名）
+        save_metrics: 是否将指标单独保存为 JSON 文件。设为 False 时只返回结果，
+                      由调用方统一写入 params_metrics.json。
+        baseline_path: 显式指定 baseline 文件路径。若为 None，默认按 tag 前缀替换。
+    """
     
     # 构建基准文件路径
-    baseline_path = image_path.replace(f"{tag}_", "ori_")  # 假设基准文件是ori_前缀
+    if baseline_path is None:
+        baseline_path = image_path.replace(f"{tag}_", "ori_")  # 默认同目录前缀替换
     
     if not os.path.exists(baseline_path):
         logging.error(f"Baseline file not found: {baseline_path}")
         logging.error("Please ensure baseline image exists for quality evaluation.")
         return None
     
-    # 构建质量评测结果保存路径
-    metrics_path = os.path.join(os.path.dirname(image_path), f"{tag}_quality_metrics.json")
+    # 构建质量评测结果保存路径（仅在 save_metrics=True 时实际写入）
+    metrics_path = os.path.join(os.path.dirname(image_path), f"{tag}_quality_metrics.json") if save_metrics else None
     
     try:
         # 执行质量评测

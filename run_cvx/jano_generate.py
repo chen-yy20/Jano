@@ -38,8 +38,9 @@ from jano import init_jano
 from jano.modules.cogvideox.pipeline_cogvideox import CogVideoXPipeline
 from jano.modules.cogvideox.cogvideox_transformer_3d import CogVideoXTransformer3DModel
 from jano.stuff import get_prompt_id
-from utils.timer import init_timer, print_time_statistics, save_time_statistics_to_file
+from utils.timer import init_timer, print_time_statistics, save_time_statistics_to_file, get_time_statistics_dict
 from utils.quality_metric import evaluate_quality_with_origin
+from utils.results import save_params_and_metrics
 
 PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
  
@@ -51,10 +52,12 @@ ANALYZE_BLOCK_SIZE = (11,8,17)
 STATIC_THRESH = 0.2
 MEDIUM_THRESH = 0.4
 WARMUP = 10
-ENABLE_JANO = 1
+DEFAULT_ENABLE_JANO = 1
+ENABLE_JANO = int(os.getenv("ENABLE_JANO", str(DEFAULT_ENABLE_JANO)))
 
 TAG = f"W{WARMUP}_B({ANALYZE_BLOCK_SIZE[0]}*{ANALYZE_BLOCK_SIZE[1]}*{ANALYZE_BLOCK_SIZE[2]})_DS({DIFFUSION_STENGTH}-{DIFFUSION_DISTANCE})_S{STATIC_THRESH}_M{MEDIUM_THRESH}" if ENABLE_JANO else "ori"
-OUTPUT_DIR = f"./cvx_results/jano_cvx_result/{get_prompt_id(PROMPT)}"
+METHOD_DIR = "jano" if ENABLE_JANO else "ori"
+OUTPUT_DIR = f"./results/cvx/{METHOD_DIR}/{get_prompt_id(PROMPT)}"
 
 logging.basicConfig(level=logging.INFO)
 
@@ -312,7 +315,31 @@ if __name__ == "__main__":
         fps=args.fps,
     )
     print_time_statistics()
-    save_time_statistics_to_file(f"{OUTPUT_DIR}/{TAG}_time_stats.txt")
-
+    # 保存参数与指标（统一 JSON）
+    params = {
+        "model": "cvx",
+        "method": "jano" if ENABLE_JANO else "ori",
+        "model_path": MODEL_PATH,
+        "prompt": PROMPT,
+        "enable_jano": ENABLE_JANO,
+        "analyze_block_size": list(ANALYZE_BLOCK_SIZE),
+        "diffusion_strength": DIFFUSION_STENGTH,
+        "diffusion_distance": DIFFUSION_DISTANCE,
+        "static_thresh": STATIC_THRESH,
+        "medium_thresh": MEDIUM_THRESH,
+        "t_weight": T_WEIGHT,
+        "warmup": WARMUP,
+        "seed": args.seed,
+    }
+    quality_result = None
     if TAG != "ori":
-        evaluate_quality_with_origin(args.output_path, TAG)
+        baseline_path = os.path.abspath(args.output_path).replace("/jano/", "/ori/").replace(f"{TAG}_", "ori_")
+        quality_result = evaluate_quality_with_origin(
+            args.output_path,
+            TAG,
+            save_metrics=False,
+            baseline_path=baseline_path,
+        )
+    quality_metrics = quality_result.get("metrics") if quality_result else None
+    params_path = save_params_and_metrics(OUTPUT_DIR, TAG, params, get_time_statistics_dict(), quality_metrics)
+    print(f"Params & metrics saved to {params_path}", flush=True)

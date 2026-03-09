@@ -207,7 +207,7 @@ class WanT2V_jano:
             yield
             
         # analyzer 和 mask manager 初始化
-        if GlobalEnv.get_envs("enable_stdit"):
+        if GlobalEnv.get_envs("enable_jano"):
             analyzer = DynamicAnalyzer(
                 C = target_shape[0],
                 T = target_shape[1],
@@ -259,7 +259,7 @@ class WanT2V_jano:
             arg_c = {'context': context, 'seq_len': seq_len}
             arg_null = {'context': context_null, 'seq_len': seq_len}
             
-            enable_jano = GlobalEnv.get_envs('enable_stdit')
+            enable_jano = GlobalEnv.get_envs('enable_jano')
             warmup_steps = GlobalEnv.get_envs('warmup_steps')
             
             with get_timer("generate_e2e"):
@@ -289,19 +289,21 @@ class WanT2V_jano:
                     timestep = torch.stack(timestep)
                     
                     self.model.to(self.device)
-                    
-                    mask_manager.update_step_level()
+                    if GlobalEnv.get_envs("enable_jano"):
+                        mask_manager.update_step_level()
                     # 2卡并行代码，cfg parallelism.
                     if get_cp_worldsize() == 2:
                         if get_cp_group().rank_in_group == 0:
                             GlobalEnv.set_envs("cond", 0) # 标记轮次，每步两轮
-                            mask_manager.begin_cond_fetch("0")
+                            if GlobalEnv.get_envs("enable_jano"):
+                                mask_manager.begin_cond_fetch("0")
                             noise_pred_cp = self.model(
                                 latent_model_input, t=timestep, **arg_c)[0]
                             
                         elif get_cp_group().rank_in_group == 1:
                             GlobalEnv.set_envs("cond", 1)
-                            mask_manager.begin_cond_fetch("1")
+                            if GlobalEnv.get_envs("enable_jano"):
+                                mask_manager.begin_cond_fetch("1")
                             noise_pred_cp = self.model(
                                 latent_model_input, t=timestep, **arg_null)[0]
                             
@@ -313,14 +315,16 @@ class WanT2V_jano:
 
                     else:  
                         GlobalEnv.set_envs("cond", 0) # 标记轮次，每步两轮
-                        mask_manager.begin_cond_fetch("0")
+                        if GlobalEnv.get_envs("enable_jano"):
+                            mask_manager.begin_cond_fetch("0")
                         noise_pred_cond_list = self.model(
                             latent_model_input, t=timestep, **arg_c)
                         GlobalEnv.set_envs("cond", 1)
-                        mask_manager.begin_cond_fetch("1")
+                        if GlobalEnv.get_envs("enable_jano"):
+                            mask_manager.begin_cond_fetch("1")
                         noise_pred_uncond_list = self.model(
                             latent_model_input, t=timestep, **arg_null)
-                    
+                     
                         noise_pred_cond = noise_pred_cond_list[0]
                         noise_pred_uncond = noise_pred_uncond_list[0]
                             
@@ -359,7 +363,7 @@ class WanT2V_jano:
             torch.cuda.synchronize()
         if dist.is_initialized():
             dist.barrier()
-        if GlobalEnv.get_envs("enable_stdit"):
+        if GlobalEnv.get_envs("enable_jano"):
             mask_manager.clear_frozen_states()
 
         return videos[0] if self.rank == 0 else None

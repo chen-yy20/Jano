@@ -29,9 +29,11 @@ from wan.utils.fm_solvers import (FlowDPMSolverMultistepScheduler,
 from wan.utils.fm_solvers_unipc import FlowUniPCMultistepScheduler
 from tqdm import tqdm
 
-from utils.timer import init_timer, get_timer, print_time_statistics, save_time_statistics_to_file
+from utils.timer import init_timer, get_timer, print_time_statistics, save_time_statistics_to_file, get_time_statistics_dict
 from utils.quality_metric import evaluate_quality_with_origin
+from utils.results import save_params_and_metrics
 from jano.stuff import get_prompt_id
+from jano.dist.parallel_state import init_distributed_environment, init_cp_group, get_cp_worldsize, get_cp_group
 from datetime import datetime
 time_str = datetime.now().strftime('%Y%m%d_%H%M%S')
 
@@ -41,11 +43,29 @@ init_timer()
 PROMPT = "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage."
 MODEL_PATH = os.getenv("MODEL_PATH", "./Wan2.1-T2V-14B")  # 1.3B / 14B
 ENABLE_TEACACHE = 1
-THRESH = 0.07 # Higher speedup will cause to worse quality -- 0.1 for 2.0x speedup -- 0.2 for 3.0x speedup
+THRESH = 0.2 # Higher speedup will cause to worse quality -- 0.1 for 2.0x speedup -- 0.2 for 3.0x speedup
 
 TAG = f"thresh{THRESH}" if ENABLE_TEACACHE else "ori"
 model_id = "1.3B" if "1.3B" in MODEL_PATH else "14B"
-OUTPUT_DIR = f"./wan_results/tea_wan_result/{model_id}/{get_prompt_id(PROMPT)}"
+OUTPUT_DIR = f"./results/wan/{model_id}/teacache/{get_prompt_id(PROMPT)}"
+
+# 2卡并行初始化（CFG parallel）
+rank = int(os.getenv("RANK", 0))
+world_size = int(os.getenv("WORLD_SIZE", 1))
+local_rank = int(os.getenv("LOCAL_RANK", 0))
+if world_size > 1:
+    assert world_size == 2, "only support cfg parallel"
+    torch.cuda.set_device(local_rank)
+    init_distributed_environment(
+        world_size=world_size,
+        rank=rank,
+        local_rank=local_rank,
+    )
+    init_cp_group(
+        group_ranks=[[0, 1]],
+        local_rank=local_rank,
+        backend="nccl",
+    )
 
 EXAMPLE_PROMPT = {
     "t2v-1.3B": {
@@ -192,10 +212,22 @@ def t2v_generate(self,
                     timestep = torch.stack(timestep)
 
                     self.model.to(self.device)
-                    noise_pred_cond = self.model(
-                        latent_model_input, t=timestep, **arg_c)[0]
-                    noise_pred_uncond = self.model(
-                        latent_model_input, t=timestep, **arg_null)[0]
+                    if get_cp_worldsize() == 2:
+                        if get_cp_group().rank_in_group == 0:
+                            noise_pred_cp = self.model(
+                                latent_model_input, t=timestep, **arg_c)[0]
+                        else:
+                            noise_pred_cp = self.model(
+                                latent_model_input, t=timestep, **arg_null)[0]
+
+                        noise_pred_gather = get_cp_group().all_gather(noise_pred_cp, dim=0, split=True)
+                        noise_pred_cond = noise_pred_gather[0]
+                        noise_pred_uncond = noise_pred_gather[1]
+                    else:
+                        noise_pred_cond = self.model(
+                            latent_model_input, t=timestep, **arg_c)[0]
+                        noise_pred_uncond = self.model(
+                            latent_model_input, t=timestep, **arg_null)[0]
 
                     noise_pred = noise_pred_uncond + guide_scale * (
                         noise_pred_cond - noise_pred_uncond)
@@ -664,33 +696,15 @@ def generate(args):
         args.offload_model = False if world_size > 1 else True
         logging.info(
             f"offload_model is not specified, set to {args.offload_model}.")
-    if world_size > 1:
-        torch.cuda.set_device(local_rank)
-        dist.init_process_group(
-            backend="nccl",
-            init_method="env://",
-            rank=rank,
-            world_size=world_size)
-    else:
+    if world_size == 1:
         assert not (
             args.t5_fsdp or args.dit_fsdp
         ), f"t5_fsdp and dit_fsdp are not supported in non-distributed environments."
         assert not (
             args.ulysses_size > 1 or args.ring_size > 1
         ), f"context parallel are not supported in non-distributed environments."
-
-    if args.ulysses_size > 1 or args.ring_size > 1:
-        assert args.ulysses_size * args.ring_size == world_size, f"The number of ulysses_size and ring_size should be equal to the world size."
-        from xfuser.core.distributed import (initialize_model_parallel,
-                                             init_distributed_environment)
-        init_distributed_environment(
-            rank=dist.get_rank(), world_size=dist.get_world_size())
-
-        initialize_model_parallel(
-            sequence_parallel_degree=dist.get_world_size(),
-            ring_degree=args.ring_size,
-            ulysses_degree=args.ulysses_size,
-        )
+    elif args.ulysses_size > 1 or args.ring_size > 1:
+        raise NotImplementedError("ulysses/ring parallel is not supported with cfg group init mode")
 
     if args.use_prompt_extend:
         if args.prompt_extend_method == "dashscope":
@@ -756,7 +770,7 @@ def generate(args):
         )
 
         # TeaCache
-        # wan_t2v.__class__.generate = t2v_generate
+        wan_t2v.__class__.generate = t2v_generate
         wan_t2v.model.__class__.enable_teacache = ENABLE_TEACACHE
         wan_t2v.model.__class__.forward = teacache_forward
         wan_t2v.model.__class__.cnt = 0
@@ -895,7 +909,7 @@ def generate(args):
         #     filename = f"{args.task}_{args.size.replace('*','x') if sys.platform=='win32' else args.size}_{args.ulysses_size}_{args.ring_size}_{formatted_prompt}_{formatted_time}" + suffix
         
         suffix = '.png' if "t2i" in args.task else '.mp4'
-        filename = f"{args.task}_{TAG}_{get_prompt_id(PROMPT)}" + suffix
+        filename = f"{TAG}_{get_prompt_id(PROMPT)}_{args.task}" + suffix
         os.makedirs(args.output_dir, exist_ok=True)
         args.save_file = os.path.join(args.output_dir, filename)
         
@@ -924,6 +938,30 @@ if __name__ == "__main__":
     args = _parse_args()
     generate(args)
     print_time_statistics()
-    save_time_statistics_to_file(f"{OUTPUT_DIR}/{TAG}_time_stats.txt")
-    if ENABLE_TEACACHE:
-        evaluate_quality_with_origin(args.save_file, TAG)
+    rank = int(os.getenv("RANK", 0))
+    if rank == 0:
+        # 保存参数与指标（统一 JSON）
+        params = {
+            "model": "wan",
+            "method": "teacache",
+            "model_id": model_id,
+            "model_path": MODEL_PATH,
+            "prompt": PROMPT,
+            "task": args.task,
+            "size": args.size,
+            "base_seed": args.base_seed,
+            "enable_teacache": bool(ENABLE_TEACACHE),
+            "thresh": THRESH,
+        }
+        quality_result = None
+        if ENABLE_TEACACHE and args.save_file is not None:
+            baseline_path = os.path.abspath(args.save_file).replace("/teacache/", "/ori/").replace(f"{TAG}_", "ori_")
+            quality_result = evaluate_quality_with_origin(
+                args.save_file,
+                TAG,
+                save_metrics=False,
+                baseline_path=baseline_path,
+            )
+        quality_metrics = quality_result.get("metrics") if quality_result else None
+        params_path = save_params_and_metrics(OUTPUT_DIR, TAG, params, get_time_statistics_dict(), quality_metrics)
+        print(f"Params & metrics saved to {params_path}", flush=True)
