@@ -150,25 +150,9 @@ First set `MODEL_PATH`, then run with `--model` and `--method`:
 
 ```bash
 # Wan2.1
-export MODEL_PATH=./Wan2.1-T2V-14B
+export MODEL_PATH=<your model path>
 
-python launch.py --model wan  --method jano
-python launch.py --model wan  --method ori
-python launch.py --model wan  --method pab
-python launch.py --model wan  --method teacache
-python launch.py --model wan  --method toca
-
-# FLUX.1
-export MODEL_PATH=./Flux-1
-
-python launch.py --model flux --method pab
-python launch.py --model flux --method jano
-python launch.py --model flux --method ori
-python launch.py --model flux --method teacache
-python launch.py --model flux --method toca
-
-# CogVideoX
-python launch.py --model cvx  --method jano
+python launch.py --model <wan/flux>  --method <ori/jano/teacache/pab/toca> --gpus-per-node <1/2> --partition <if specific>
 ```
 
 > **参数修改说明 / Parameter configuration:**
@@ -182,27 +166,12 @@ python launch.py --model cvx  --method jano
 > export PYTHONPATH=$PYTHONPATH:$(pwd)
 > ```
 
-## Distributed Inference / 分布式运行
-
-Multi-GPU (CFG-parallel) is supported for Jano and PAB on Wan2.1.
-
-**SLURM clusters:**
-```bash
-# Recommended unified command
-python launch.py --launcher srun --model wan --method jano --gpus-per-node 2 --partition h01
-
-# Compatible legacy script
-bash 2gpu_wan_run.sh ./run_wan/jano_generate.py
-```
-
-**Other launchers (e.g., torchrun):**  
-Set `RANK`, `WORLD_SIZE`, and `LOCAL_RANK` environment variables accordingly.
 
 ## Memory Optimization for Wan-14B / Wan-14B 内存优化
 
 | Method | Technique |
 |--------|-----------|
-| Jano   | Set `MEMORY_EFFICIENT_CACHE=True` + 2-GPU parallel |
+| Jano   | Set `KV_OFFLOAD=1` + 2-GPU parallel |
 | PAB    | Set `LAYER_INTERVAL=2` (memory ÷ n) + 2-GPU parallel |
 
 ## License / 许可证
