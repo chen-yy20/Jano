@@ -1,4 +1,4 @@
-# Jano: Adaptive Diffusion Generation with Early-stage Convergence Awareness [CVPR'26 findings]
+# Jano: Adaptive Diffusion Generation with Early-stage Convergence Awareness
 [![arXiv](https://img.shields.io/badge/arXiv-2603.00519-b31b1b.svg)](https://arxiv.org/abs/2603.00519)
 
 
